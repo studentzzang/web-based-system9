@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>{{ title }} | SeaSound Lab</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+  {% block head %}{% endblock %}
+</head>
+<body><a class="skip" href="#content">본문 바로가기</a><div class="app-shell">
+<aside class="sidebar">
+  <a class="brand" href="{{ url_for('index') }}"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span><span><strong>SeaSound Lab</strong><small>수중 음향 분석 시스템</small></span></a>
+  <p class="nav-label">MODULES</p><nav aria-label="주요 화면">
+  {% for key, name, sub, icon in [('explorer','Explorer','음향 분석','≋'),('classifier','Classifier','AI 선종 분류','◇'),('traffic','Traffic Map','AIS 항적','⌖'),('simulator','Simulator','가상 청음기','◎')] %}
+  <a href="{{ url_for(key) }}" class="nav-item {{ 'active' if page == key else '' }}" {% if page == key %}aria-current="page"{% endif %}><span aria-hidden="true">{{ icon }}</span>{{ name }} <small>{{ sub }}</small></a>
+  {% endfor %}</nav><div class="side-foot">Project 2+3 · 개발 중</div>
+</aside>
+<div class="workspace"><header class="topbar"><div><a href="{{ url_for('index') }}">SeaSound Lab</a> / <strong>{{ title }}</strong></div><span class="preview-pill">기능별 구현 상태 안내</span></header>
+<main id="content"><section class="module"><div class="module-heading"><div><span class="kicker">SEASOUND WORKSPACE</span><h1>{{ title }}</h1></div></div>{% block content %}{% endblock %}</section><footer>SeaSound Lab · STFT는 API 응답을 표시하며 디자인 예시는 별도 안내합니다.</footer></main></div>
+</div></body></html>

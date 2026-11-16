@@ -1,0 +1,5 @@
+{% extends 'base.html' %}
+{% block content %}<article class="panel notice"><span class="tag">미구현 · 화면 안내만 제공</span><h2>AI 선종 분류</h2><p>모델 로딩, WAV 전처리, 추론 및 Grad-CAM API가 필요합니다.</p><p>현재 실제 분석 결과를 생성하지 않습니다. 첨부 목업의 예시 수치는 결과로 표시하지 않습니다.</p><a href="{{ url_for('explorer') }}">Explorer에서 STFT 분석하기 →</a></article>
+<div class="mockup-notice" role="note"><strong>화면 디자인 예시 · 기능 미구현</strong><p>아래는 첨부 HTML의 화면 구성입니다. 파일명, 지도, 확률, 그래프 및 모든 수치는 예시이며 실제 처리 결과가 아닙니다. 입력 및 실행 기능은 비활성화되어 있습니다.</p></div>
+<div class="design-preview">{% include 'previews/classifier.html' %}</div>
+{% endblock %}

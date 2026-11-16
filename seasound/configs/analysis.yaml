@@ -1,0 +1,7 @@
+sample_rate: 16000
+
+stft:
+  n_fft: 2048
+  hop_length: 512
+  window: hann
+  center: false
