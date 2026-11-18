@@ -1,5 +1,79 @@
 {% extends 'base.html' %}
-{% block content %}<article class="panel notice"><span class="tag">미구현 · 화면 안내만 제공</span><h2>AIS 항적 지도</h2><p>AIS 데이터 수집, 시간 필터 및 지도 연동이 필요합니다.</p><p>현재 실제 분석 결과를 생성하지 않습니다. 첨부 목업의 예시 수치는 결과로 표시하지 않습니다.</p><a href="{{ url_for('explorer') }}">Explorer에서 STFT 분석하기 →</a></article>
-<div class="mockup-notice" role="note"><strong>화면 디자인 예시 · 기능 미구현</strong><p>아래는 첨부 HTML의 화면 구성입니다. 파일명, 지도, 확률, 그래프 및 모든 수치는 예시이며 실제 처리 결과가 아닙니다. 입력 및 실행 기능은 비활성화되어 있습니다.</p></div>
-<div class="design-preview">{% include 'previews/traffic.html' %}</div>
+{% block head %}
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="anonymous">
+<link rel="stylesheet" href="{{ url_for('static', filename='traffic.css') }}">
+<script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin="anonymous" defer></script>
+<script src="{{ url_for('static', filename='traffic.js') }}" defer></script>
+{% endblock %}
+{% block content %}
+<div class="traffic-page" id="traffic-root"
+     data-meta-url="{{ url_for('traffic_data.metadata') }}"
+     data-positions-url="{{ url_for('traffic_data.positions') }}"
+     data-track-url-template="{{ url_for('traffic_data.track', mmsi='MMSI_PLACEHOLDER') }}">
+  <div class="traffic-intro">
+    <p>실제 AIS 위치 기록에서 선박의 이동을 확인합니다. 시간을 움직이거나 선종을 고른 뒤 지도에서 선박을 선택하세요.</p>
+    <span class="tag" id="traffic-date">데이터 확인 중</span>
+  </div>
+
+  <div class="traffic-layout">
+    <section class="panel traffic-map-panel" aria-label="AIS 항적 지도와 시간 조작">
+      <div class="traffic-toolbar">
+        <label for="traffic-class">선종 필터
+          <select id="traffic-class" disabled><option value="">전체 선종</option></select>
+        </label>
+        <div class="traffic-toolbar-actions">
+          <span id="traffic-count">선박 위치 불러오는 중</span>
+          <button id="traffic-fit" class="secondary" type="button" disabled>전체 해역</button>
+        </div>
+      </div>
+      <div id="traffic-map" class="traffic-map" role="region" aria-label="샌프란시스코만 AIS 항적 지도"></div>
+      <div class="traffic-legend" aria-label="선종별 지도 색상">
+        <span><i class="traffic-color cargo"></i>Cargo</span>
+        <span><i class="traffic-color tanker"></i>Tanker</span>
+        <span><i class="traffic-color passenger"></i>Passenger</span>
+        <span><i class="traffic-color tug"></i>Tug/Work</span>
+        <span><i class="traffic-color fishing"></i>Fishing</span>
+        <span><i class="traffic-color small"></i>Small craft</span>
+        <span><i class="traffic-color other"></i>Other</span>
+      </div>
+      <div class="traffic-timeline">
+        <button id="traffic-play" type="button" aria-label="시간 재생" disabled>▶ 재생</button>
+        <label for="traffic-slider">시간 위치
+          <input id="traffic-slider" type="range" min="0" max="1439" value="720" step="1" disabled>
+        </label>
+        <output id="traffic-clock" for="traffic-slider">--:-- UTC</output>
+        <label for="traffic-speed">속도
+          <select id="traffic-speed" disabled>
+            <option value="1">×1</option><option value="4" selected>×4</option><option value="12">×12</option>
+          </select>
+        </label>
+      </div>
+      <p id="traffic-status" class="traffic-status" role="status" aria-live="polite">AIS 데이터를 불러오는 중입니다…</p>
+    </section>
+
+    <aside class="panel traffic-vessel-panel" aria-labelledby="traffic-vessel-heading">
+      <span class="kicker">SELECTED VESSEL</span>
+      <h2 id="traffic-vessel-heading">선박 정보</h2>
+      <p id="traffic-vessel-empty">지도에서 선박을 클릭하면 항적과 정보를 볼 수 있습니다.</p>
+      <div id="traffic-vessel-data" hidden>
+        <span class="tag" id="traffic-vessel-class">—</span>
+        <dl class="traffic-vessel-list">
+          <div><dt>MMSI</dt><dd id="traffic-vessel-mmsi">—</dd></div>
+          <div><dt>속도 (SOG)</dt><dd id="traffic-vessel-sog">—</dd></div>
+          <div><dt>침로 (COG)</dt><dd id="traffic-vessel-cog">—</dd></div>
+          <div><dt>위도</dt><dd id="traffic-vessel-lat">—</dd></div>
+          <div><dt>경도</dt><dd id="traffic-vessel-lon">—</dd></div>
+          <div><dt>AIS 시각 (UTC)</dt><dd id="traffic-vessel-time">—</dd></div>
+        </dl>
+        <p id="traffic-vessel-note" class="traffic-vessel-note"></p>
+      </div>
+    </aside>
+  </div>
+
+  <p class="traffic-source">출처: <a href="https://marinecadastre.gov/ais/" target="_blank" rel="noopener noreferrer">NOAA Marine Cadastre AIS</a>.
+    이 화면은 과거 AIS 위치 기록을 재생합니다. 녹음 파일의 선박과 항적을 1:1로 연결하지 않습니다.
+    지도 배경에는 OpenStreetMap 타일을 사용합니다.</p>
+</div>
 {% endblock %}

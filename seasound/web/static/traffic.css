@@ -1,0 +1,43 @@
+.traffic-page{padding-bottom:12px}
+.traffic-intro{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:16px}
+.traffic-intro p{margin:0;color:#63747b;font-size:13px}
+.traffic-intro .tag{flex:none;font-size:11px}
+.traffic-layout{display:grid;grid-template-columns:minmax(0,1fr) 280px;gap:14px;align-items:start}
+.traffic-map-panel,.traffic-vessel-panel{padding:16px}
+.traffic-toolbar{display:flex;align-items:end;justify-content:space-between;gap:12px;margin-bottom:12px}
+.traffic-toolbar label{width:220px;max-width:48%;font-size:12px}
+.traffic-toolbar select{font-size:13px}
+.traffic-toolbar-actions{display:flex;align-items:center;gap:12px}
+.traffic-toolbar-actions span{color:#63747b;font-size:12px;white-space:nowrap}
+.traffic-toolbar button{padding:8px 11px;font-size:12px;white-space:nowrap}
+.traffic-map{position:relative;z-index:0;width:100%;height:500px;border:1px solid #b7cbd0;border-radius:7px;background:#d7e6e9}
+.traffic-map canvas{background:transparent}
+.traffic-legend{display:flex;flex-wrap:wrap;gap:8px 13px;margin:12px 0;color:#667980;font-size:11px}
+.traffic-legend span{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
+.traffic-color{display:inline-block;width:9px;height:9px;border-radius:50%;background:#6b7d87}
+.traffic-color.cargo{background:#2b8b75}.traffic-color.tanker{background:#bc7650}
+.traffic-color.passenger{background:#4d85b4}.traffic-color.tug{background:#8773af}
+.traffic-color.fishing{background:#b39a40}.traffic-color.small{background:#728e9b}
+.traffic-color.other{background:#879198}
+.traffic-timeline{display:flex;align-items:end;gap:11px;margin-top:14px}
+.traffic-timeline>button{flex:none;min-width:83px;padding:9px 11px;font-size:12px}
+.traffic-timeline label{display:block;flex:1;min-width:0;font-size:11px}
+.traffic-timeline input[type=range]{display:block;width:100%;height:30px;margin:5px 0 0;accent-color:#668f87}
+.traffic-timeline output{flex:none;min-width:82px;padding-bottom:8px;color:#446e66;text-align:center;font:12px Consolas,monospace}
+.traffic-timeline label:last-child{flex:none;width:72px}
+.traffic-timeline select{font-size:12px}
+.traffic-status{min-height:20px;margin:10px 0 0;color:#63747b;font-size:12px}
+.traffic-status[data-error="true"]{color:#a12727}
+.traffic-vessel-panel h2{margin:6px 0 12px;font-size:19px}
+.traffic-vessel-panel p{color:#718188;font-size:12px;line-height:1.6}
+.traffic-vessel-list{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:16px 0 0}
+.traffic-vessel-list>div{min-width:0;padding:10px;border:1px solid #e3e9ea;border-radius:6px;background:#f9fbfb}
+.traffic-vessel-list dt{color:#829198;font-size:10px}
+.traffic-vessel-list dd{margin:4px 0 0;overflow-wrap:anywhere;color:#40565e;font-size:12px;font-weight:650}
+.traffic-vessel-note{margin-bottom:0}
+.traffic-source{margin:13px 0 0;color:#76868d;font-size:11px;line-height:1.6}
+.traffic-source a{color:#3d7367;text-decoration:underline}
+.traffic-map .leaflet-control-attribution{font-size:10px}
+.traffic-page button:disabled,.traffic-page select:disabled{cursor:not-allowed;opacity:.58}
+@media(max-width:1050px){.traffic-layout{grid-template-columns:1fr}.traffic-map{height:440px}}
+@media(max-width:620px){.traffic-intro{align-items:start;flex-direction:column}.traffic-toolbar{align-items:stretch;flex-direction:column}.traffic-toolbar label{width:100%;max-width:none}.traffic-toolbar-actions{justify-content:space-between}.traffic-map{height:360px}.traffic-timeline{flex-wrap:wrap}.traffic-timeline label:nth-of-type(1){flex-basis:calc(100% - 94px)}.traffic-timeline output{order:3;text-align:left}.traffic-timeline label:last-child{order:4;margin-left:auto}.traffic-vessel-list{grid-template-columns:1fr 1fr}}

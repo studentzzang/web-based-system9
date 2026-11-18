@@ -2,7 +2,7 @@
 {% block content %}
 <p>네 가지 기능에서 작업을 선택하세요. 환경 변화 실험은 관련 기능 내부의 옵션으로 제공할 예정입니다.</p>
 <div class="home-grid">
-{% for key, name, state, description in [('explorer','Explorer','녹음 검색 · A/B 비교','녹음을 검색하고 파형·STFT 재생 커서 및 토널·조건부 회전수를 비교합니다.'),('classifier','Classifier','미구현','선종 분류 모델과 추론 API 연결이 필요합니다.'),('traffic','Traffic Map','미구현','AIS 데이터와 지도 연결이 필요합니다.'),('simulator','Simulator','미구현','전파 모델과 음향 합성 API 연결이 필요합니다.')] %}
+{% for key, name, state, description in [('explorer','Explorer','녹음 검색 · A/B 비교','녹음을 검색하고 파형·STFT 재생 커서 및 토널·조건부 회전수를 비교합니다.'),('classifier','Classifier','미구현','선종 분류 모델과 추론 API 연결이 필요합니다.'),('traffic','Traffic Map','AIS 항적 재생 · 선종 필터','AIS 기록을 시간에 따라 재생하고, 선종별 위치·항적과 선박 정보를 확인합니다.'),('simulator','Simulator','미구현','전파 모델과 음향 합성 API 연결이 필요합니다.')] %}
 <a class="panel home-card" href="{{ url_for(key) }}"><span class="tag">{{ state }}</span><h2>{{ name }}</h2><p>{{ description }}</p><span>화면 열기 →</span></a>
 {% endfor %}</div>
 {% endblock %}
