@@ -6,6 +6,7 @@ from dsp.stft_cache import WAV_ROOT
 from web.stft_api import stft_bp
 from web.explorer_api import explorer_bp
 from web.traffic_api import traffic_bp
+from web.simulator_api import simulator_bp
 
 app = Flask(__name__)
 app.register_blueprint(stft_bp)
@@ -13,10 +14,13 @@ app.config.update(
     AUDIO_ROOT=os.environ.get('SEASOUND_AUDIO_ROOT', str(WAV_ROOT)),
     RECORDINGS_CSV=os.environ.get('SEASOUND_RECORDINGS_CSV', str(Path(__file__).resolve().parents[1] / 'data' / 'catalog.csv')),
     AIS_CSV=os.environ.get('SEASOUND_AIS_CSV', str(Path(__file__).resolve().parents[1] / 'data' / 'ais_clean.csv')),
+    SIMULATOR_CONFIG=os.environ.get('SEASOUND_SIMULATOR_CONFIG', str(Path(__file__).resolve().parents[1] / 'configs' / 'simulator.yaml')),
+    SIMULATOR_RUNS_ROOT=os.environ.get('SEASOUND_SIMULATOR_RUNS_ROOT', str(Path(__file__).resolve().parents[1] / 'runs')),
     AUDIO_PLAYBACK_CACHE=str(Path(app.instance_path) / 'playback'),
 )
 app.register_blueprint(explorer_bp)
 app.register_blueprint(traffic_bp)
+app.register_blueprint(simulator_bp)
 
 
 @app.get('/')

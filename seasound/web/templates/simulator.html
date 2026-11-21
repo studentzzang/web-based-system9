@@ -1,5 +1,71 @@
 {% extends 'base.html' %}
-{% block content %}<article class="panel notice"><span class="tag">미구현 · 화면 안내만 제공</span><h2>가상 수중청음기</h2><p>청음기 조건 설정, 전달 손실 계산 및 음향 합성 API가 필요합니다.</p><p>현재 실제 분석 결과를 생성하지 않습니다. 첨부 목업의 예시 수치는 결과로 표시하지 않습니다.</p><a href="{{ url_for('explorer') }}">Explorer에서 STFT 분석하기 →</a></article>
-<div class="mockup-notice" role="note"><strong>화면 디자인 예시 · 기능 미구현</strong><p>아래는 첨부 HTML의 화면 구성입니다. 파일명, 지도, 확률, 그래프 및 모든 수치는 예시이며 실제 처리 결과가 아닙니다. 입력 및 실행 기능은 비활성화되어 있습니다.</p></div>
-<div class="design-preview">{% include 'previews/simulator.html' %}</div>
+{% block head %}
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="anonymous">
+<link rel="stylesheet" href="{{ url_for('static', filename='simulator.css') }}">
+<script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin="anonymous" defer></script>
+<script src="{{ url_for('static', filename='simulator.js') }}" defer></script>
+{% endblock %}
+{% block content %}
+<div class="sim-page" id="sim-root"
+     data-meta-url="{{ url_for('simulator_data.metadata') }}"
+     data-scene-url="{{ url_for('simulator_data.scene') }}"
+     data-audio-url="{{ url_for('simulator_data.audio') }}">
+  <div class="sim-intro">
+    <p>지도를 클릭하거나 청음기 표식을 드래그하세요. 선택한 시각의 AIS 선박 위치로 수신 레벨과 합성 음향을 계산합니다.</p>
+    <span class="tag" id="sim-date">데이터 확인 중</span>
+  </div>
+
+  <div class="sim-layout">
+    <section class="panel sim-map-panel" aria-label="가상 수중청음기 지도">
+      <div class="sim-map-heading"><strong>청음기 위치</strong><span id="sim-coordinates">위치 불러오는 중</span></div>
+      <div id="sim-map" class="sim-map" role="region" aria-label="클릭하여 청음기를 옮길 수 있는 AIS 지도"></div>
+      <p class="sim-map-hint">청록색 표식을 드래그하거나 지도를 클릭해 옮기세요. 원은 청음 반경입니다.</p>
+    </section>
+
+    <section class="panel sim-controls" aria-label="청음 조건">
+      <span class="kicker">LISTENING SETUP</span>
+      <h2>청음 조건</h2>
+      <label for="sim-radius">청음 반경 <output id="sim-radius-value" for="sim-radius">5.0 km</output>
+        <input id="sim-radius" type="range" min="0.5" max="20" step="0.5" value="5" disabled>
+      </label>
+      <label for="sim-window">그래프 시간 구간
+        <select id="sim-window" disabled><option value="30">30분</option><option value="60" selected>1시간</option><option value="120">2시간</option></select>
+      </label>
+      <div class="sim-stat"><span>반경 내 선박</span><strong id="sim-count">—</strong></div>
+      <div class="sim-stat"><span>합성 수신 레벨</span><strong id="sim-level">—</strong></div>
+      <button id="sim-listen" type="button" disabled>▶ 가상 청음 시작</button>
+      <p id="sim-audio-status" class="sim-small" role="status" aria-live="polite">현재 조건의 선박 소리를 합성합니다.</p>
+      <p class="sim-small">청음 중에 위치·시간·반경을 바꾸면 합성 소리도 갱신됩니다.</p>
+    </section>
+  </div>
+
+  <section class="panel sim-timeline-panel" aria-label="AIS 시각 선택">
+    <div class="sim-time-controls">
+      <button id="sim-play" type="button" disabled aria-label="AIS 시간 재생">▶ 시간 재생</button>
+      <label for="sim-time">AIS 시각
+        <input id="sim-time" type="range" min="0" max="1439" value="720" step="1" disabled>
+      </label>
+      <output id="sim-clock" for="sim-time">--:-- UTC</output>
+    </div>
+    <p id="sim-status" class="sim-small" role="status" aria-live="polite">AIS 데이터를 불러오는 중입니다…</p>
+  </section>
+
+  <section class="panel sim-graph-panel" aria-labelledby="sim-graph-heading">
+    <div class="sim-section-head"><div><span class="kicker">RECEIVED LEVEL</span><h2 id="sim-graph-heading">시간별 수신 레벨</h2></div><span id="sim-graph-range">—</span></div>
+    <canvas id="sim-graph" width="1000" height="260" role="img" aria-label="시간별 합성 수신 레벨 그래프"></canvas>
+    <p class="sim-small">반경 안의 선박 소스 레벨을 합산한 계산값입니다. 음압 측정값이 아닙니다.</p>
+  </section>
+
+  <section class="panel sim-vessels-panel" aria-labelledby="sim-vessels-heading">
+    <div class="sim-section-head"><div><span class="kicker">NEARBY VESSELS</span><h2 id="sim-vessels-heading">주변 선박</h2></div><span id="sim-vessel-summary">—</span></div>
+    <div class="sim-table-wrap"><table><thead><tr><th>선박</th><th>선종</th><th>거리</th><th>속도</th><th>TL</th><th>RL</th></tr></thead><tbody id="sim-vessels"></tbody></table></div>
+  </section>
+
+  <p class="sim-disclaimer">이 화면은 과거 AIS와 별도로 수집된 선종별 WAV를 결합한 <strong>가상 실험</strong>입니다.
+    현재 샘플 음원: <strong id="sim-sample-dataset">확인 중</strong>.
+    AIS 선박의 실제 녹음이 아닙니다. 선종별 소스 레벨은 가정값이며 수심·수온·해저 지형은 반영하지 않습니다.
+    지도는 OpenStreetMap 타일을 사용합니다.</p>
+</div>
 {% endblock %}

@@ -1,0 +1,27 @@
+# Illustrative source levels, not measurements of the AIS vessels.
+frequency_hz: 1000
+minimum_distance_m: 100
+reference_speed_kn: 10
+speed_db_per_doubling: 3
+source_level_db:
+  Cargo: 160
+  Tanker: 164
+  Passenger: 157
+  Tug/Work: 154
+  Fishing: 148
+  Small craft: 145
+  Other: 148
+sample_paths:
+  Cargo: vessel/181.wav
+  Tanker: vessel/9.wav
+  Passenger: vessel/509.wav
+  Tug/Work: vessel/230.wav
+  Fishing: vessel/192.wav
+  Small craft: vessel/22.wav
+  Other: vessel/46.wav
+audio:
+  seconds: 5
+  sample_rate_hz: 16000
+  max_vessels: 6
+  reference_rl_db: 100
+  rms_at_reference: 0.08
