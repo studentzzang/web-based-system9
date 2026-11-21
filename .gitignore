@@ -1,3 +1,4 @@
 seasound/data/
+!seasound/data/features/
 analysis_cache/
 __pycache__/

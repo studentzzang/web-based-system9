@@ -1,0 +1,28 @@
+# 분류기 학습 설정. 실행할 때마다 runs/{실험ID}/ 에 이 파일 사본과 로그가 저장된다.
+tag: resnet18_unified
+seed: 42
+
+data:
+  # build_features 실행 후 출력된 폴더 경로로 바꿀 것 (data/features/{feature_id})
+  feature_dir: data/features/CHANGE_ME
+  # 학습/평가에 쓸 통합 클래스. 여기 없는 클래스(Other, Tanker 등)는 자동 제외
+  classes: [Background, Cargo, Fishing, Passenger, Small craft, Tug/Work]
+
+model:
+  name: resnet18
+  pretrained: true          # ImageNet 사전학습 가중치 (첫 실행 때 인터넷 필요)
+
+train:
+  epochs: 30
+  batch_size: 64
+  lr: 3.0e-4
+  weight_decay: 1.0e-4
+  patience: 8               # select_metric이 이만큼 안 오르면 조기 종료
+  select_metric: val_rec_macro_f1   # best 모델 선택 기준: 녹음 단위 val macro F1
+  spec_augment: true
+  class_weight_power: 0.5   # 0 = 가중치 없음, 1 = 역빈도, 0.5 = 제곱근
+  amp: true                 # GPU에서 mixed precision
+  num_workers: 0            # Windows에서 문제 생기면 0 유지
+  deterministic: true
+
+output_root: runs
