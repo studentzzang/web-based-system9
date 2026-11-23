@@ -4,10 +4,10 @@ seed: 42
 
 data:
   # build_features 실행 후 출력된 폴더 경로로 바꿀 것 (data/features/{feature_id})
-  feature_dir: data/features/CHANGE_ME
-  # 학습/평가에 쓸 통합 클래스. 여기 없는 클래스(Other, Tanker 등)는 자동 제외
-  classes: [Background, Cargo, Fishing, Passenger, Small craft, Tug/Work]
+  feature_dir: data/features/3acce8e86614
 
+  #classes: [Background, Cargo, Fishing, Passenger, Small craft, Tug/Work] #이건 과적합, 성능 못미침 어케할지 결정해야됨
+  classes: [Background, Cargo, Passenger, Tug/Work] # 클래스 네개만 하는 ver
 model:
   name: resnet18
   pretrained: true          # ImageNet 사전학습 가중치 (첫 실행 때 인터넷 필요)

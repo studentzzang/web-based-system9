@@ -1,0 +1,25 @@
+tag: resnet18_4cls
+seed: 42
+data:
+  feature_dir: data/features/3acce8e86614
+  classes:
+  - Background
+  - Cargo
+  - Passenger
+  - Tug/Work
+model:
+  name: resnet18
+  pretrained: true
+train:
+  epochs: 30
+  batch_size: 64
+  lr: 0.0003
+  weight_decay: 0.0001
+  patience: 8
+  select_metric: val_rec_macro_f1
+  spec_augment: true
+  class_weight_power: 0.5
+  amp: true
+  num_workers: 0
+  deterministic: true
+output_root: runs
