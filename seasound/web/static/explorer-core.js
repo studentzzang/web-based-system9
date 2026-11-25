@@ -7,9 +7,10 @@ globalThis.SeaSound = (() => {
     const z=raw.db ?? raw.S_db ?? raw.stft_db ?? raw.Zxx_db;
     if (!axis(f) || !axis(t) || f[0]<0 || t[0]<0 || !Array.isArray(z) || z.length!==f.length ||
         !z.every(row=>Array.isArray(row) && row.length===t.length && row.every(Number.isFinite))) {
-      throw new Error('STFT 응답 형식 오류: frequencies, times, db[주파수][시간]을 확인하세요.');
+      throw new Error('스펙트로그램 응답 형식 오류: frequencies, times, db[주파수][시간]을 확인하세요.');
     }
-    return {f,t,z};
+    const duration = Number.isFinite(raw.duration) && raw.duration > 0 ? raw.duration : null;
+    return {f,t,z,duration};
   }
   function ranges(values) {
     const parsed=values.map(v=>String(v).trim()==='' ? NaN : Number(v));
@@ -28,5 +29,9 @@ globalThis.SeaSound = (() => {
     v=clamp(v);const a=v<.5?[15,25,70]:[35,160,160], b=v<.5?[35,160,160]:[250,230,90];
     const w=v<.5?v*2:(v-.5)*2;return a.map((n,i)=>Math.round(n+(b[i]-n)*w));
   }
-  return {normalize,ranges,clamp,seek,nearest,palette};
+  // Slaney scale, matching librosa's default mel filter bank.
+  const logStep = Math.log(6.4) / 27;
+  const toMel = hz => hz < 1000 ? hz / (200 / 3) : 15 + Math.log(hz / 1000) / logStep;
+  const fromMel = mel => mel < 15 ? mel * (200 / 3) : 1000 * Math.exp((mel - 15) * logStep);
+  return {normalize,ranges,clamp,seek,nearest,palette,toMel,fromMel};
 })();

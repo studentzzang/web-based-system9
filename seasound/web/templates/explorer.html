@@ -1,16 +1,17 @@
 {% extends 'base.html' %}
 {% block head %}
-<script src="{{ url_for('static', filename='explorer-core.js') }}" defer></script>
-<script src="{{ url_for('static', filename='explorer.js', v='shaft-harmonics-1') }}" defer></script>
+<script src="{{ url_for('static', filename='explorer-core.js', v='four-modes-1') }}" defer></script>
+<script src="{{ url_for('static', filename='explorer.js', v='four-modes-1') }}" defer></script>
 {% endblock %}
 {% block content %}
-<p>녹음을 검색해 A/B에 담고 실제 파형·STFT·분석 수치를 비교하세요. 재생 커서는 각 녹음의 절대 시간(초)을 따릅니다.</p>
+<p>녹음을 검색해 A/B에 담고 파형·스펙트로그램·분석 수치를 비교하세요. 재생 커서는 각 녹음의 절대 시간(초)을 따릅니다.</p>
 <section class="panel search-panel" aria-label="녹음 검색">
 <form id="search-form" class="search-fields"
       data-list-endpoint="{{ url_for('recordings.recordings') }}"
       data-audio-endpoint="{{ url_for('recordings.audio') }}"
       data-waveform-endpoint="{{ url_for('recordings.waveform') }}"
       data-analysis-endpoint="{{ url_for('recordings.analysis') }}"
+      data-spectrogram-endpoint="{{ url_for('recordings.spectrogram') }}"
       data-stft-endpoint="{{ url_for('stft.get_stft') }}">
 <label>데이터셋<select id="dataset"><option value="">전체 데이터셋</option></select></label>
 <label>클래스<select id="category"><option value="">전체 클래스</option></select></label>
@@ -24,6 +25,13 @@
 <div class="pagination"><button id="previous" type="button" class="secondary">이전</button><span id="page-info"></span><button id="next" type="button" class="secondary">다음</button></div>
 </section>
 <div class="panel control-panel shared-controls">
+<div class="spectrum-modes" role="group" aria-label="A/B 공통 시각화">
+  <button type="button" data-spectrum-mode="stft" aria-pressed="true">STFT</button>
+  <button type="button" data-spectrum-mode="logmel" aria-pressed="false">Log-Mel</button>
+  <button type="button" data-spectrum-mode="lofar" aria-pressed="false">LOFAR</button>
+  <button type="button" data-spectrum-mode="demon" aria-pressed="false">DEMON</button>
+</div>
+<p id="range-axis">주파수 (Hz) 표시 범위</p>
 <label>최소 주파수 (Hz)<input id="fmin" type="number" min="0" value="0" step="any"></label>
 <label>최대 주파수 (Hz)<input id="fmax" type="number" min="0" value="8000" step="any"></label>
 <label>색상 하한 (상대 dB)<input id="dbmin" type="number" value="-80" step="any"></label>
@@ -35,24 +43,24 @@
 {% for slot in ['a','b'] %}
 <article id="panel-{{ slot }}" class="panel recording-card compare-card" aria-labelledby="title-{{ slot }}">
 <div class="card-head"><div><span class="kicker">RECORDING {{ slot|upper }}</span><h2 id="title-{{ slot }}">비교 녹음 {{ slot|upper }}</h2></div><span class="tag">실제 데이터</span></div>
-<form id="load-{{ slot }}" class="path-form"><label for="path-{{ slot }}">서버 녹음 경로</label><input id="path-{{ slot }}" required placeholder="예: vessel/0.wav"><button type="submit">STFT 불러오기</button></form>
+<form id="load-{{ slot }}" class="path-form"><label for="path-{{ slot }}">서버 녹음 경로</label><input id="path-{{ slot }}" required placeholder="예: vessel/0.wav"><button type="submit">녹음 불러오기</button></form>
 <p id="meta-{{ slot }}" class="file-meta">검색 결과에서 녹음을 선택하거나 경로를 입력하세요.</p>
 <audio id="audio-{{ slot }}" controls preload="metadata" aria-label="녹음 {{ slot|upper }} 재생"></audio>
 <p id="audio-status-{{ slot }}" class="resource-status" role="status"></p>
 <p class="chart-caption">전체 녹음 파형 · 클릭 / 좌우 방향키로 재생 위치 이동</p>
 <div class="cursor-wrap waveform-wrap"><canvas id="wave-{{ slot }}" width="1000" height="160" tabindex="0" role="img" aria-label="녹음 {{ slot|upper }} 파형. 데이터 없음"></canvas><span id="wave-cursor-{{ slot }}" class="play-cursor" hidden></span></div>
 <p id="wave-status-{{ slot }}" class="resource-status" role="status"></p>
-<div class="chart-label"><span>STFT · 전체 녹음</span><output id="time-{{ slot }}">0.00 s</output></div>
+<div class="chart-label"><span id="spectrum-label-{{ slot }}">STFT · 전체 녹음</span><output id="time-{{ slot }}">0.00 s</output></div>
 <div class="cursor-wrap spectrum-wrap"><canvas id="spectrogram-{{ slot }}" width="1000" height="400" tabindex="0" role="img" aria-label="녹음 {{ slot|upper }} STFT. 데이터 없음"></canvas><span id="spec-cursor-{{ slot }}" class="play-cursor spec-cursor" hidden></span></div>
 <p id="stft-status-{{ slot }}" class="resource-status" role="status"></p>
 <div class="color-key"><span class="color-low">−80 dB</span><i></i><span class="color-high">0 dB</span></div>
 <dl class="record-metrics" style="grid-template-columns: repeat(2, minmax(0, 1fr))">
-  <div><dt>토널 주파수</dt><dd style="margin:0"><b id="tonal-{{ slot }}">—</b></dd></div>
+  <div><dt>대표 토널 주파수</dt><dd style="margin:0"><b id="tonal-{{ slot }}">—</b></dd></div>
   <div><dt>추정 축 회전수</dt><dd style="margin:0"><b id="shaft-{{ slot }}">—</b></dd></div>
 </dl>
 <p id="analysis-status-{{ slot }}" class="resource-status" role="status"></p>
 </article>
 {% endfor %}
 </div>
-<details class="panel control-panel"><summary>환경 변화 실험 · 미구현</summary><p>잡음·거리 감쇠 옵션은 아직 적용하지 않습니다. Log-Mel 및 별도의 LOFAR/DEMON 영상도 제공하지 않습니다. 수치 분석은 Welch 스펙트럼과 대역통과·포락선 기반 탐색 분석입니다.</p></details>
+<details class="panel control-panel"><summary>환경 변화 실험 · 미구현</summary><p>잡음·거리 감쇠 옵션은 아직 적용하지 않습니다.</p></details>
 {% endblock %}

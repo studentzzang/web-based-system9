@@ -3,6 +3,7 @@
 The existing /api/stft blueprint is intentionally kept separate.
 """
 import csv
+from collections import Counter, defaultdict
 import hashlib
 import math
 import os
@@ -15,7 +16,9 @@ import numpy as np
 import soundfile as sf
 from flask import Blueprint, current_app, jsonify, request, send_file
 from scipy.ndimage import median_filter
-from scipy.signal import butter, find_peaks, hilbert, periodogram, sosfiltfilt, welch
+from scipy.signal import find_peaks, periodogram, welch
+
+from dsp.explorer_spectrogram import MODES, demon_envelope, recording_spectrogram
 
 explorer_bp = Blueprint('recordings', __name__, url_prefix='/api/recordings')
 _catalog_cache = {}
@@ -269,17 +272,14 @@ def measure_signal(samples, rate, band_low, band_high, blades=None):
     floor = median_filter(db, size=31, mode='nearest')
     candidates = [int(p) for p in peaks if f[p] >= 10 and db[p] - floor[p] >= 6 and db[p] >= -50]
     candidates.sort(key=lambda p: psd[p], reverse=True)
-    empty['tonals'] = [dict(hz=round(float(f[p]), 3), relative_db=round(float(db[p]), 2)) for p in candidates[:5]]
-    filtered = sosfiltfilt(butter(4, [band_low, band_high], btype='bandpass', fs=rate, output='sos'), x)
-    # Trim filter/Hilbert edges; reject near-constant envelopes such as a pure tone.
-    envelope = np.abs(hilbert(filtered))
-    trim = min(int(rate * .25), len(envelope) // 8)
-    envelope = envelope[trim:-trim] if trim else envelope
+    empty['tonals'] = [dict(hz=float(f[p]), relative_db=round(float(db[p]), 2)) for p in candidates[:5]]
+    if len(x) < 2 * rate:
+        return empty
+    envelope = demon_envelope(x, rate, band_low, band_high)
     mean = float(envelope.mean())
     if mean <= 1e-12 or float(envelope.std()) / mean < .02:
         return empty
-    fm, pm = welch(envelope - mean, rate, window='hann',
-                   nperseg=min(len(envelope), int(rate * 4), 65536))
+    fm, pm = periodogram(envelope, fs=rate, window='hann', detrend='constant')
     valid = np.flatnonzero((fm >= .5) & (fm <= 50))
     if len(valid) < 3:
         return empty
@@ -294,7 +294,8 @@ def measure_signal(samples, rate, band_low, band_high, blades=None):
                  note='포락선의 우세 변조 후보입니다. 블레이드 통과 주파수라는 검증이 필요합니다.')
     shaft = None if blades else recurring_fundamental(envelope, rate)
     if shaft is not None:
-        empty.update(shaft_hz=round(shaft, 3), shaft_rpm=round(shaft * 60, 2),
+        empty.update(shaft_hz=shaft, shaft_rpm=round(shaft * 60, 2),
+                     shaft_resolution_hz=rate / (len(envelope) // 2),
                      shaft_method='envelope_harmonics',
                      note='앞뒤 구간의 기본 주파수와 2·3배음이 반복된 음향 후보입니다.')
     elif blades:
@@ -307,9 +308,73 @@ def measure_signal(samples, rate, band_low, band_high, blades=None):
     return empty
 
 
+def most_frequent_groups(points, bin_hz):
+    """Find disjoint frequency groups, counting a recording segment at most once."""
+    remaining = sorted(points)
+    winners = []
+    while remaining:
+        counts = Counter()
+        left = best_left = best_right = 0
+        best = (0, 0.0)
+        for right, (hz, segment) in enumerate(remaining):
+            counts[segment] += 1
+            while hz - remaining[left][0] > bin_hz + 1e-9:
+                previous = remaining[left][1]
+                counts[previous] -= 1
+                if not counts[previous]:
+                    del counts[previous]
+                left += 1
+            score = (len(counts), remaining[left][0] - hz)
+            if score > best:
+                best, best_left, best_right = score, left, right + 1
+
+        if winners and best[0] < winners[0]["segments"]:
+            break
+        by_segment = defaultdict(list)
+        for hz, segment in remaining[best_left:best_right]:
+            by_segment[segment].append(hz)
+        representative = float(np.median([np.median(hz) for hz in by_segment.values()]))
+        winners.append({"hz": round(representative, 3), "segments": best[0]})
+        del remaining[best_left:best_right]
+    return sorted(winners, key=lambda item: item["hz"])
+
+
+def clip_analysis(source, low, high, background):
+    rate = source.samplerate
+    if source.frames < 2:
+        raise ValueError('분석할 음향 샘플이 부족합니다.')
+    tonals, shafts, segments = [], [], 0
+    tonal_bin = shaft_bin = math.inf
+    while source.tell() < source.frames:
+        remaining = source.frames - source.tell()
+        frames = remaining if remaining < 22 * rate else 20 * rate
+        samples = source.read(frames, dtype="float64", always_2d=True).mean(axis=1)
+        if len(samples) != frames:
+            raise ValueError('WAV 파일 길이가 올바르지 않습니다.')
+        result = measure_signal(samples, rate, low, high)
+        tonal_bin = min(tonal_bin, result["resolution_hz"])
+        tonals.extend((peak["hz"], segments) for peak in result["tonals"])
+        if not background and result["shaft_hz"] is not None:
+            shaft_bin = min(shaft_bin, result["shaft_resolution_hz"])
+            shafts.append((result["shaft_hz"], segments))
+        segments += 1
+
+    shaft_groups = most_frequent_groups(shafts, shaft_bin)
+    for group in shaft_groups:
+        group["rpm"] = round(group["hz"] * 60, 2)
+    return {
+        "scope": "clip", "start": 0, "end": source.frames / rate,
+        "segments": segments, "segment_seconds": 20, "background": background,
+        "tonals": most_frequent_groups(tonals, tonal_bin), "shafts": shaft_groups,
+    }
+
+
 @explorer_bp.get('/analysis')
 def analysis():
     path = resolve_recording(request.args.get('path', ''))
+    scope = request.args.get('scope', 'segment')
+    if scope not in ('segment', 'clip'):
+        raise ValueError('지원하지 않는 분석 범위입니다.')
     start, seconds = number('start', 0, 0, 1e9), number('seconds', 10, 2, 30)
     blade_value = request.args.get('blades', '').strip()
     blades = number('blades', 1, 1, 20) if blade_value else None
@@ -322,6 +387,8 @@ def analysis():
         high = number('band_high', min(3000, rate * .45), 1, 1000000)
         if not low < high < rate / 2:
             raise ValueError(f'복조 대역은 0 < 하한 < 상한 < {rate / 2:g} Hz여야 합니다.')
+        if scope == 'clip':
+            return jsonify(clip_analysis(source, low, high, path.parent.name.lower() == 'background'))
         frame = int(start * rate)
         if frame >= source.frames:
             raise ValueError('분석 시작 시간이 녹음 길이를 벗어났습니다.')
@@ -333,8 +400,23 @@ def analysis():
         source.seek(frame)
         x = source.read(frames, dtype='float64', always_2d=True).mean(axis=1)
     result = measure_signal(x, rate, low, high, blades)
+    for tonal in result['tonals']:
+        tonal['hz'] = round(tonal['hz'], 3)
+    if result['shaft_hz'] is not None:
+        result['shaft_hz'] = round(result['shaft_hz'], 3)
+    result.pop('shaft_resolution_hz', None)
     if path.parent.name.lower() == 'background':
         result.update(shaft_hz=None, shaft_rpm=None, shaft_method=None, note='배경 녹음')
-    result.update(start=frame / rate, end=(frame + frames) / rate, method='Welch PSD / bandpass + Hilbert envelope + Welch',
+    result.update(start=frame / rate, end=(frame + frames) / rate, method='Welch PSD / bandpass + Hilbert envelope + periodogram',
                   channel_mix='mean')
     return jsonify(result)
+
+
+@explorer_bp.get('/spectrogram')
+def spectrogram():
+    mode = request.args.get('mode', '').lower()
+    if mode not in MODES:
+        raise ValueError('지원하지 않는 시각화 모드입니다.')
+    path = resolve_recording(request.args.get('path', ''))
+    return jsonify(recording_spectrogram(path, mode))
+

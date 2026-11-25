@@ -71,7 +71,8 @@ def get_stft():
         )
 
         freq_axis, time_axis, db = reduce_spectrogram(
-            frequencies, times, power
+            frequencies, times, power,
+            max_freq_bins=len(frequencies) if request.args.get("detail") == "frequency" else 256,
         )
 
     except FileNotFoundError:
