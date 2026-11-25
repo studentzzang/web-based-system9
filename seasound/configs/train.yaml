@@ -4,10 +4,19 @@ seed: 42
 
 data:
   # build_features 실행 후 출력된 폴더 경로로 바꿀 것 (data/features/{feature_id})
-  feature_dir: data/features/3acce8e86614
+  feature_dir: data/features/9d3a8ba1fdd4
 
-  #classes: [Background, Cargo, Fishing, Passenger, Small craft, Tug/Work] #이건 과적합, 성능 못미침 어케할지 결정해야됨
-  classes: [Background, Cargo, Passenger, Tug/Work] # 클래스 네개만 하는 ver
+    # 6클래스 (통합 클래스, Tanker·Other 제외): rec macro F1 0.480 — Fishing F1 0이 평균을 깎음
+  #   실험: runs/20261123-000204_resnet18_unified_s42
+  #classes: [Background, Cargo, Fishing, Passenger, Small craft, Tug/Work]
+
+  #4클래스 (명세 목표 4클래스 기준, Tanker는 VTUAD 5개뿐이라 Background로 대체): rec macro F1 0.645
+  #   실험: runs/20261123-042924_resnet18_4cls_s42   ※ 조교님 확인 필요
+  classes: [Background, Cargo, Passenger, Tug/Work]
+
+  # 8 클래스
+  #classes: [Background, Cargo, Fishing, Other, Passenger, Small craft, Tanker, Tug/Work]
+
 model:
   name: resnet18
   pretrained: true          # ImageNet 사전학습 가중치 (첫 실행 때 인터넷 필요)

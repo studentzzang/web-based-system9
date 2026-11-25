@@ -1,0 +1,22 @@
+# 전처리 설정. 값을 바꾸면 feature_id(해시)가 바뀌어 data/features/ 아래에 새 폴더로 저장된다.
+catalog: data/catalog.csv
+output_root: data/features
+wav_root: data/vtuad_wav/strict_interval_wav/inclusion_4000_exclusion_6000
+
+target_sr: 16000
+
+segment:
+  length_sec: 5.0     # 명세: 5초 세그먼트
+  hop_sec: 2.5        # 명세: 50% 중첩
+
+logmel:
+  n_fft: 1024
+  hop_length: 320     # 20 ms -> 5초에 251 프레임
+  n_mels: 128
+  fmin: 10.0
+  fmax: 8000.0
+  ref: max            # 1.0 = 절대 레벨 dB, "max" = 세그먼트별 최대값 기준 (비교 실험용)
+  amin: 1.0e-10
+  top_db: 80.0
+
+store_dtype: float16  # 저장 용량 절반. 학습 때 float32로 변환
