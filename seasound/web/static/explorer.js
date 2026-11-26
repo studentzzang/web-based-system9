@@ -86,14 +86,6 @@ function drawWave(canvas,wave){
   ctx.stroke();ctx.strokeStyle='#b6c9c4';ctx.beginPath();ctx.moveTo(0,80);ctx.lineTo(1000,80);ctx.stroke();
   canvas.setAttribute('aria-label',`전체 ${wave.duration.toFixed(2)}초 파형, 채널 평균. 클릭 또는 좌우 방향키로 탐색`);
 }
-function formatWinners(items, key, unit, empty) {
-  if (!items.length) return empty;
-  const values = items.map(item => item[key].toFixed(2) + ' ' + unit).join(', ');
-  return items.length > 1
-    ? values + ' · ' + items.length + '개 후보가 각각 ' + items[0].segments + '구간에서 검출'
-    : values;
-}
-
 const panels=[];
 class RecordingPanel {
   constructor(slot){
@@ -120,6 +112,8 @@ class RecordingPanel {
   resetMetrics() {
     this.get('tonal').textContent = '—';
     this.get('shaft').textContent = '—';
+    this.get('shaft-evidence').replaceChildren();
+    this.get('shaft-evidence').hidden = true;
   }
   plotDuration() {
     return this.spectrum?.duration ?? this.wave?.duration ??
@@ -203,6 +197,41 @@ class RecordingPanel {
       message(this.get('stft-status'),`${this.spectrum.f.length}주파수 × ${this.spectrum.t.length}프레임 · 각 녹음 최대 파워 기준`);
     }catch(error){this.plotVisible=false;clear(this.get('spectrogram'),'표시 범위 오류');message(this.get('stft-status'),error.message,true);}this.updateCursor();
   }
+  showShaftResult(result) {
+    const shaft = this.get('shaft');
+    if (result.background) {
+      shaft.textContent = '해당 없음';
+      return;
+    }
+
+    const estimate = result.shafts[0];
+    shaft.textContent = '추정 불가';
+    if (estimate) {
+      const basis = result.shaft_method === 'explicit_blade_pass'
+        ? '우세 변조를 날개 통과음으로 가정 · 날개 ' + estimate.blade_count + '개'
+        : '기본 반복을 축 1회전으로 가정';
+      shaft.textContent = estimate.rpm.toFixed(2) + ' rpm 후보 · ' + basis;
+    }
+
+    const evidence = this.get('shaft-evidence');
+    const entries = (result.shaft_candidates ?? []).map(candidate =>
+      candidate.hz.toFixed(3) + ' Hz 반복 후보 · 근거 점수 ' +
+      Math.round(100 * candidate.score) + '/100 · ' +
+      candidate.segments + '/' + result.segments + '구간 · 배음 차수 ' +
+      candidate.orders.join('·')
+    );
+    if (!entries.length && Number.isFinite(result.modulated_segments)) {
+      entries.push('배음 후보 없음 · 변조 검출 ' +
+        result.modulated_segments + '/' + result.segments + '구간');
+    }
+    evidence.hidden = entries.length === 0;
+    for (const entry of entries) {
+      const item = document.createElement('li');
+      item.textContent = entry;
+      evidence.append(item);
+    }
+  }
+
   async analyze(){
     if(!this.path){message(this.get('analysis-status'),'먼저 녹음을 선택하세요.',true);return;}
     this.analysisController?.abort();const controller=new AbortController();this.analysisController=controller;
@@ -217,9 +246,7 @@ class RecordingPanel {
       this.get('tonal').textContent = tonal
         ? tonal.hz.toFixed(2) + ' Hz · ' + tonal.segments + '/' + r.segments + '구간에서 검출'
         : '검출 없음';
-      this.get('shaft').textContent = r.background
-        ? '해당 없음'
-        : formatWinners(r.shafts, 'rpm', 'rpm', '추정 불가');
+      this.showShaftResult(r);
       message(this.get('analysis-status'), '전체 ' + r.end.toFixed(1) +
         '초 · 20초 단위로 ' + r.segments + '개 구간 분석' +
         ' · 토널 분석 ' + r.tonal_band_hz.join('–') + ' Hz');

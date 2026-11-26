@@ -55,7 +55,7 @@ def load_or_compute_stft(recording_path, *, audio_root=None):
     options = config["stft"]
 
     config_hash = hashlib.sha256(
-        json.dumps(config, sort_keys=True).encode()
+        json.dumps({"sample_rate": config["sample_rate"], "stft": options}, sort_keys=True).encode()
     ).hexdigest()[:12]
 
     # 2. 실제 WAV 경로 찾기

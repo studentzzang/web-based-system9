@@ -1,11 +1,13 @@
 """Bounded spectrogram data for Explorer's supplementary views."""
 import math
+from functools import partial
 
 import numpy as np
 import soundfile as sf
-from scipy.signal import butter, hilbert, periodogram, sosfiltfilt, stft
+from scipy.signal import stft
 
 from data_io.preprocess import resample_audio
+from dsp import demon
 
 
 BLOCK_SECONDS = 20
@@ -32,42 +34,14 @@ def lofar_chunk(samples, rate):
     return f[low], t, power_db(np.abs(z[low]) ** 2)
 
 
-def demon_upper_hz(rate):
-    return min(8000, rate / 2)
-
-
-def demon_envelope(samples, rate, low, high):
-    # The DC offset is not an acoustic carrier. At Nyquist no upper filter is needed.
-    signal = np.asarray(samples, dtype=np.float64)
-    signal = signal - signal.mean()
-    nyquist = rate / 2
-    if 0 < low and high < nyquist:
-        sos = butter(4, [low, high], btype="bandpass", fs=rate, output="sos")
-    elif high < nyquist:
-        sos = butter(4, high, btype="lowpass", fs=rate, output="sos")
-    elif low > 0:
-        sos = butter(4, low, btype="highpass", fs=rate, output="sos")
-    else:
-        sos = None
-    if sos is not None:
-        signal = sosfiltfilt(sos, signal)
-    envelope = np.abs(hilbert(signal))
-    trim = min(rate // 4, len(envelope) // 8)
-    return envelope[trim:-trim] if trim else envelope
-
-
 def power_db(power):
     return 10 * np.log10(np.maximum(power, 1e-30))
 
 
-def demon_chunk(samples, rate):
-    envelope = demon_envelope(samples, rate, 0, demon_upper_hz(rate))
-    envelope, env_rate = resample_audio(envelope, rate, target_rate=200)
-    f, power = periodogram(envelope, fs=env_rate, window="hann",
-                           nfft=BLOCK_SECONDS * env_rate, detrend="constant")
-    if envelope.std() < max(1e-12, .02 * envelope.mean()):
-        power[:] = 0
-    band = f <= 50
+def demon_chunk(samples, rate, cfg=None):
+    cfg = demon.read_settings() if cfg is None else cfg
+    f, power, _ = demon.spectrum(samples, rate, cfg, min_fft_seconds=BLOCK_SECONDS)
+    band = f <= cfg["modulation_range_hz"][1]
     return f[band], np.zeros(1), power_db(power[band, None])
 
 
@@ -80,6 +54,8 @@ MODES = {
 
 def recording_spectrogram(path, mode):
     transform, hop, axis = MODES[mode]
+    if mode == "demon":
+        transform = partial(transform, cfg=demon.read_settings())
     with sf.SoundFile(path) as source:
         rate = source.samplerate
         duration = source.frames / rate

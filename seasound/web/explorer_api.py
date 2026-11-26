@@ -3,7 +3,6 @@
 The existing /api/stft blueprint is intentionally kept separate.
 """
 import csv
-from collections import Counter, defaultdict
 import hashlib
 import math
 import os
@@ -16,9 +15,10 @@ import numpy as np
 import soundfile as sf
 from flask import Blueprint, current_app, jsonify, request, send_file
 from scipy.ndimage import median_filter
-from scipy.signal import find_peaks, periodogram, welch
+from scipy.signal import find_peaks, welch
 
-from dsp.explorer_spectrogram import MODES, demon_envelope, demon_upper_hz, recording_spectrogram
+from dsp import demon
+from dsp.explorer_spectrogram import MODES, recording_spectrogram
 from dsp.tonal import TONAL_BAND_HZ, representative_tonal
 
 explorer_bp = Blueprint('recordings', __name__, url_prefix='/api/recordings')
@@ -201,60 +201,8 @@ def waveform():
                        times=times, min=minima, max=maxima, channel_mix='mean')
 
 
-def harmonic_families(envelope, rate):
-    """Find observed fundamentals with visible second and third harmonics."""
-    freq, power = periodogram(envelope, fs=rate, window='hann', detrend='constant')
-    step = freq[1]
-    band = (freq >= .5) & (freq <= 50)
-    if not np.any(band):
-        return []
-    reference = power[band].max()
-    if reference <= 0:
-        return []
-    db = 10 * np.log10(np.maximum(power / reference, 1e-12))
-    peaks, _ = find_peaks(db, prominence=9)
-    floor = np.median(db[band])
-    peaks = [p for p in peaks if band[p] and db[p] >= max(-26, floor + 10)]
-    # Sub-bin peak locations using the log-power parabola at a Hann peak.
-    lines = []
-    for p in peaks:
-        curvature = db[p-1] - 2 * db[p] + db[p+1]
-        shift = np.clip((db[p-1] - db[p+1]) / (2 * curvature), -.5, .5) if curvature else 0
-        lines.append(float(freq[p] + shift * step))
-    candidates = []
-    for base in lines:
-        if base < max(.5, 3 * step) or 3 * base > 50:
-            continue
-        matches = [base]
-        for order in (2, 3):
-            target = order * base
-            nearest = min(lines, key=lambda v: abs(v-target))
-            if abs(nearest-target) <= max(.65 * step, .015 * target):
-                matches.append(nearest)
-        # A second comparably strong, unrelated line makes the source ambiguous.
-        def belongs_to_family(line):
-            order = round(line / base)
-            return order >= 1 and abs(line - order * base) <= max(step, .02 * line)
-        competing = any(db[p] >= -8 and not belongs_to_family(line)
-                        for p, line in zip(peaks, lines))
-        if len(matches) == 3 and not competing:
-            candidates.append(float(np.median(np.asarray(matches) / [1, 2, 3])))
-    return candidates
-
-
-def recurring_fundamental(envelope, rate):
-    """Require the same three-line family in two non-overlapping intervals."""
-    first, second = np.array_split(envelope, 2)
-    left = harmonic_families(first, rate)
-    right = harmonic_families(second, rate)
-    resolution = rate / len(first)
-    matches = [(a + b) / 2 for a in left for b in right
-               if abs(a-b) <= max(.55 * resolution, .025 * a)]
-    return matches[0] if len(matches) == 1 else None
-
-
-def measure_signal(samples, rate, band_low, band_high, blades=None):
-    """Welch tonals and an acoustic shaft candidate from periodic modulation."""
+def measure_signal(samples, rate, bounds, band_limits, cfg, blades=None):
+    """Welch tonal peaks plus conditional RPM evidence for the segment API."""
     x = np.asarray(samples, dtype=np.float64)
     if not np.isfinite(x).all():
         raise ValueError('WAV에 유효하지 않은 신호 값이 있습니다.')
@@ -263,7 +211,7 @@ def measure_signal(samples, rate, band_low, band_high, blades=None):
     f, psd = welch(x, rate, window='hann', nperseg=nperseg, noverlap=nperseg // 2)
     reference = float(psd.max())
     empty = dict(tonals=[], modulation_hz=None, shaft_hz=None, shaft_rpm=None,
-                 blade_count=blades, resolution_hz=float(f[1] - f[0]), band_hz=[band_low, band_high],
+                 blade_count=blades, resolution_hz=float(f[1] - f[0]), band_hz=list(band_limits), shaft_candidates=[],
                  note='변조 후보를 검출하지 못했습니다. 회전수를 추정하지 않습니다.')
     if reference <= 1e-20 or np.sqrt(np.mean(x*x)) < 1e-9:
         empty['note'] = '무음 또는 신호가 너무 약합니다.'
@@ -276,76 +224,29 @@ def measure_signal(samples, rate, band_low, band_high, blades=None):
     empty['tonals'] = [dict(hz=float(f[p]), relative_db=round(float(db[p]), 2)) for p in candidates[:5]]
     if len(x) < 2 * rate:
         return empty
-    envelope = demon_envelope(x, rate, band_low, band_high)
-    mean = float(envelope.mean())
-    if mean <= 1e-12 or float(envelope.std()) / mean < .02:
-        return empty
-    fm, pm = periodogram(envelope, fs=rate, window='hann', detrend='constant')
-    valid = np.flatnonzero((fm >= .5) & (fm <= 50))
-    if len(valid) < 3:
-        return empty
-    pm_db = 10 * np.log10(np.maximum(pm / max(float(pm.max()), 1e-30), 1e-12))
-    peaks, props = find_peaks(pm_db, prominence=8)
-    selected = [int(p) for p in peaks if .5 <= fm[p] <= 50 and pm[p] > 10 * np.median(pm[valid])]
-    if not selected:
-        return empty
-    peak = max(selected, key=lambda p: pm[p])
-    hz = float(fm[peak])
-    empty.update(modulation_hz=round(hz, 3),
-                 note='포락선의 우세 변조 후보입니다. 블레이드 통과 주파수라는 검증이 필요합니다.')
-    shaft = None if blades else recurring_fundamental(envelope, rate)
-    if shaft is not None:
-        empty.update(shaft_hz=shaft, shaft_rpm=round(shaft * 60, 2),
-                     shaft_resolution_hz=rate / (len(envelope) // 2),
-                     shaft_method='envelope_harmonics',
-                     note='앞뒤 구간의 기본 주파수와 2·3배음이 반복된 음향 후보입니다.')
-    elif blades:
-        # Preserve the explicit, caller-supplied blade-pass mode for older API users.
-        empty.update(shaft_hz=round(hz / blades, 3), shaft_rpm=round(hz / blades * 60, 2),
-                     shaft_method='explicit_blade_pass',
-                     note=f'변조 후보를 블레이드 통과 주파수로 가정하고 {blades}개 블레이드로 나눈 조건부 추정입니다.')
-    else:
-        empty['note'] = '두 구간에서 일관된 배음 간격을 식별하지 못했습니다.'
+    window = demon.analyze_window(x, rate, cfg, bounds)
+    dominant = window[0]
+    empty["modulation_hz"] = round(dominant, 3) if dominant is not None else None
+    candidates, accepted = demon.rank_windows([window], cfg)
+    empty["shaft_candidates"] = candidates
+    if blades and dominant is not None:
+        empty.update(shaft_hz=dominant/blades, shaft_rpm=round(60*dominant/blades, 2),
+                     shaft_method="explicit_blade_pass",
+                     note="우세 변조가 날개 통과음이라는 가정으로 환산했습니다.")
+    elif accepted:
+        empty.update(shaft_hz=accepted[0]["hz"], shaft_rpm=accepted[0]["rpm"],
+                     shaft_method="multiband_harmonics",
+                     note="기본 반복을 축 1회전으로 가정한 음향 후보입니다.")
+    elif dominant is not None:
+        empty["note"] = "변조 검출 · 축 RPM 근거 부족"
     return empty
 
 
-def most_frequent_groups(points, bin_hz):
-    """Find disjoint frequency groups, counting a recording segment at most once."""
-    remaining = sorted(points)
-    winners = []
-    while remaining:
-        counts = Counter()
-        left = best_left = best_right = 0
-        best = (0, 0.0)
-        for right, (hz, segment) in enumerate(remaining):
-            counts[segment] += 1
-            while hz - remaining[left][0] > bin_hz + 1e-9:
-                previous = remaining[left][1]
-                counts[previous] -= 1
-                if not counts[previous]:
-                    del counts[previous]
-                left += 1
-            score = (len(counts), remaining[left][0] - hz)
-            if score > best:
-                best, best_left, best_right = score, left, right + 1
-
-        if winners and best[0] < winners[0]["segments"]:
-            break
-        by_segment = defaultdict(list)
-        for hz, segment in remaining[best_left:best_right]:
-            by_segment[segment].append(hz)
-        representative = float(np.median([np.median(hz) for hz in by_segment.values()]))
-        winners.append({"hz": round(representative, 3), "segments": best[0]})
-        del remaining[best_left:best_right]
-    return sorted(winners, key=lambda item: item["hz"])
-
-
-def clip_analysis(source, low, high, background):
+def clip_analysis(source, cfg, bounds, background, blades):
     rate = source.samplerate
     if source.frames < 2:
         raise ValueError('분석할 음향 샘플이 부족합니다.')
-    windows, shafts, segments = [], [], 0
-    shaft_bin = math.inf
+    windows, measurements = [], []
     while source.tell() < source.frames:
         first = source.tell()
         remaining = source.frames - first
@@ -354,18 +255,18 @@ def clip_analysis(source, low, high, background):
         samples = source.read(frames, dtype="float64", always_2d=True).mean(axis=1)
         if len(samples) != frames:
             raise ValueError('WAV 파일 길이가 올바르지 않습니다.')
-        result = measure_signal(samples, rate, low, high)
-        if not background and result["shaft_hz"] is not None:
-            shaft_bin = min(shaft_bin, result["shaft_resolution_hz"])
-            shafts.append((result["shaft_hz"], segments))
-        segments += 1
-
-    shaft_groups = most_frequent_groups(shafts, shaft_bin)
-    for group in shaft_groups:
-        group["rpm"] = round(group["hz"] * 60, 2)
+        if not background and frames >= 2 * rate:
+            measurements.append(demon.analyze_window(samples, rate, cfg, bounds))
+    candidates, shaft_groups = demon.rank_windows(measurements, cfg)
+    method = "multiband_harmonics"
+    if blades and not background:
+        method = "explicit_blade_pass"
+        shaft_groups = demon.blade_pass_rpm(measurements, blades, cfg)
     return {
         "scope": "clip", "start": 0, "end": source.frames / rate,
-        "segments": segments, "segment_seconds": 20, "background": background,
+        "segments": len(windows), "segment_seconds": 20, "background": background,
+        "shaft_candidates": candidates, "shaft_method": method,
+        "modulated_segments": sum(w[0] is not None for w in measurements),
         "tonals": representative_tonal(source, windows), "tonal_band_hz": TONAL_BAND_HZ,
         "shafts": shaft_groups,
     }
@@ -392,14 +293,16 @@ def analysis():
         raise ValueError('블레이드 수는 정수여야 합니다.')
     blades = int(blades) if blades else None
     background = is_background_recording(path)
+    cfg = demon.read_settings()
     with sf.SoundFile(path) as source:
         rate = source.samplerate
-        low = number('band_low', 0, 0, rate / 2)
-        high = number('band_high', demon_upper_hz(rate), 0, rate / 2)
+        low = number('band_low', cfg['carrier_bands_hz'][0][0], 0, rate / 2)
+        high = number('band_high', min(rate / 2, cfg['carrier_bands_hz'][-1][1]), 0, rate / 2)
         if low >= high:
             raise ValueError(f'복조 대역은 0 ≤ 하한 < 상한 ≤ {rate / 2:g} Hz여야 합니다.')
+        bounds = (low, high) if 'band_low' in request.args or 'band_high' in request.args else None
         if scope == 'clip':
-            return jsonify(clip_analysis(source, low, high, background))
+            return jsonify(clip_analysis(source, cfg, bounds, background, blades))
         frame = int(start * rate)
         if frame >= source.frames:
             raise ValueError('분석 시작 시간이 녹음 길이를 벗어났습니다.')
@@ -410,14 +313,13 @@ def analysis():
             raise ValueError('분석 데이터가 너무 큽니다. 구간 길이를 줄이세요.')
         source.seek(frame)
         x = source.read(frames, dtype='float64', always_2d=True).mean(axis=1)
-    result = measure_signal(x, rate, low, high, blades)
+    result = measure_signal(x, rate, bounds, (low, high), cfg, blades)
     for tonal in result['tonals']:
         tonal['hz'] = round(tonal['hz'], 3)
     if result['shaft_hz'] is not None:
         result['shaft_hz'] = round(result['shaft_hz'], 3)
-    result.pop('shaft_resolution_hz', None)
     if background:
-        result.update(shaft_hz=None, shaft_rpm=None, shaft_method=None, note='배경 녹음')
+        result.update(shaft_hz=None, shaft_rpm=None, shaft_method=None, shaft_candidates=[], note='배경 녹음')
     result.update(start=frame / rate, end=(frame + frames) / rate, method='Welch PSD / Hilbert envelope + periodogram',
                   channel_mix='mean')
     return jsonify(result)
