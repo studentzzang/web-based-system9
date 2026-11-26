@@ -18,7 +18,8 @@ from flask import Blueprint, current_app, jsonify, request, send_file
 from scipy.ndimage import median_filter
 from scipy.signal import find_peaks, periodogram, welch
 
-from dsp.explorer_spectrogram import MODES, demon_envelope, recording_spectrogram
+from dsp.explorer_spectrogram import MODES, demon_envelope, demon_upper_hz, recording_spectrogram
+from dsp.tonal import TONAL_BAND_HZ, representative_tonal
 
 explorer_bp = Blueprint('recordings', __name__, url_prefix='/api/recordings')
 _catalog_cache = {}
@@ -343,17 +344,17 @@ def clip_analysis(source, low, high, background):
     rate = source.samplerate
     if source.frames < 2:
         raise ValueError('분석할 음향 샘플이 부족합니다.')
-    tonals, shafts, segments = [], [], 0
-    tonal_bin = shaft_bin = math.inf
+    windows, shafts, segments = [], [], 0
+    shaft_bin = math.inf
     while source.tell() < source.frames:
-        remaining = source.frames - source.tell()
+        first = source.tell()
+        remaining = source.frames - first
         frames = remaining if remaining < 22 * rate else 20 * rate
+        windows.append((first, first + frames))
         samples = source.read(frames, dtype="float64", always_2d=True).mean(axis=1)
         if len(samples) != frames:
             raise ValueError('WAV 파일 길이가 올바르지 않습니다.')
         result = measure_signal(samples, rate, low, high)
-        tonal_bin = min(tonal_bin, result["resolution_hz"])
-        tonals.extend((peak["hz"], segments) for peak in result["tonals"])
         if not background and result["shaft_hz"] is not None:
             shaft_bin = min(shaft_bin, result["shaft_resolution_hz"])
             shafts.append((result["shaft_hz"], segments))
@@ -365,8 +366,17 @@ def clip_analysis(source, low, high, background):
     return {
         "scope": "clip", "start": 0, "end": source.frames / rate,
         "segments": segments, "segment_seconds": 20, "background": background,
-        "tonals": most_frequent_groups(tonals, tonal_bin), "shafts": shaft_groups,
+        "tonals": representative_tonal(source, windows), "tonal_band_hz": TONAL_BAND_HZ,
+        "shafts": shaft_groups,
     }
+
+
+def is_background_recording(path):
+    relative = path.relative_to(audio_root()).as_posix()
+    for record in catalog()["items"]:
+        if record["path"] == relative:
+            return record["class"].strip().casefold() == "background"
+    return path.parent.name.casefold() == "background"
 
 
 @explorer_bp.get('/analysis')
@@ -381,14 +391,15 @@ def analysis():
     if blades is not None and not blades.is_integer():
         raise ValueError('블레이드 수는 정수여야 합니다.')
     blades = int(blades) if blades else None
+    background = is_background_recording(path)
     with sf.SoundFile(path) as source:
         rate = source.samplerate
-        low = number('band_low', 200, 1, 1000000)
-        high = number('band_high', min(3000, rate * .45), 1, 1000000)
-        if not low < high < rate / 2:
-            raise ValueError(f'복조 대역은 0 < 하한 < 상한 < {rate / 2:g} Hz여야 합니다.')
+        low = number('band_low', 0, 0, rate / 2)
+        high = number('band_high', demon_upper_hz(rate), 0, rate / 2)
+        if low >= high:
+            raise ValueError(f'복조 대역은 0 ≤ 하한 < 상한 ≤ {rate / 2:g} Hz여야 합니다.')
         if scope == 'clip':
-            return jsonify(clip_analysis(source, low, high, path.parent.name.lower() == 'background'))
+            return jsonify(clip_analysis(source, low, high, background))
         frame = int(start * rate)
         if frame >= source.frames:
             raise ValueError('분석 시작 시간이 녹음 길이를 벗어났습니다.')
@@ -405,9 +416,9 @@ def analysis():
     if result['shaft_hz'] is not None:
         result['shaft_hz'] = round(result['shaft_hz'], 3)
     result.pop('shaft_resolution_hz', None)
-    if path.parent.name.lower() == 'background':
+    if background:
         result.update(shaft_hz=None, shaft_rpm=None, shaft_method=None, note='배경 녹음')
-    result.update(start=frame / rate, end=(frame + frames) / rate, method='Welch PSD / bandpass + Hilbert envelope + periodogram',
+    result.update(start=frame / rate, end=(frame + frames) / rate, method='Welch PSD / Hilbert envelope + periodogram',
                   channel_mix='mean')
     return jsonify(result)
 

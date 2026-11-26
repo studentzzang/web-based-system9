@@ -153,7 +153,7 @@ class RecordingPanel {
     const jobs=[
       this.loadSpectrum(),
       task('wave',api('recordings/waveform',{path}),raw=>{this.wave=raw;drawWave(this.get('wave'),raw);message(this.get('wave-status'),`전체 ${raw.duration.toFixed(2)}초 · 채널 평균 파형 · 진폭은 이 파형 내 최댓값 기준`);this.redraw();this.updateCursor();}),
-      this.analyze(record)
+      this.analyze()
     ];
     await Promise.allSettled(jobs);clearTimeout(timeout);
   }
@@ -203,7 +203,7 @@ class RecordingPanel {
       message(this.get('stft-status'),`${this.spectrum.f.length}주파수 × ${this.spectrum.t.length}프레임 · 각 녹음 최대 파워 기준`);
     }catch(error){this.plotVisible=false;clear(this.get('spectrogram'),'표시 범위 오류');message(this.get('stft-status'),error.message,true);}this.updateCursor();
   }
-  async analyze(record){
+  async analyze(){
     if(!this.path){message(this.get('analysis-status'),'먼저 녹음을 선택하세요.',true);return;}
     this.analysisController?.abort();const controller=new AbortController();this.analysisController=controller;
     const token=++this.analysisEpoch,epoch=this.epoch;this.resetMetrics();
@@ -213,13 +213,16 @@ class RecordingPanel {
     try{
       const r=await json(api('recordings/analysis',params),controller.signal);
       if(token!==this.analysisEpoch || epoch!==this.epoch)return;
-      this.get('tonal').textContent = formatWinners(r.tonals, 'hz', 'Hz', '검출 없음');
-      const background = r.background || record?.class?.toLowerCase() === 'background';
-      this.get('shaft').textContent = background
+      const tonal = r.tonals[0];
+      this.get('tonal').textContent = tonal
+        ? tonal.hz.toFixed(2) + ' Hz · ' + tonal.segments + '/' + r.segments + '구간에서 검출'
+        : '검출 없음';
+      this.get('shaft').textContent = r.background
         ? '해당 없음'
         : formatWinners(r.shafts, 'rpm', 'rpm', '추정 불가');
       message(this.get('analysis-status'), '전체 ' + r.end.toFixed(1) +
-        '초 · 20초 단위로 ' + r.segments + '개 구간 분석');
+        '초 · 20초 단위로 ' + r.segments + '개 구간 분석' +
+        ' · 토널 분석 ' + r.tonal_band_hz.join('–') + ' Hz');
     }catch(error){if(token===this.analysisEpoch && epoch===this.epoch)message(this.get('analysis-status'),error.name==='AbortError'?'분석 요청이 취소되었거나 시간이 초과되었습니다.':error.message,true);}
     finally{clearTimeout(timeout);}
   }

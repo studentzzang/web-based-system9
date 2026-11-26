@@ -32,9 +32,26 @@ def lofar_chunk(samples, rate):
     return f[low], t, power_db(np.abs(z[low]) ** 2)
 
 
+def demon_upper_hz(rate):
+    return min(8000, rate / 2)
+
+
 def demon_envelope(samples, rate, low, high):
-    band = butter(4, [low, high], btype="bandpass", fs=rate, output="sos")
-    envelope = np.abs(hilbert(sosfiltfilt(band, samples)))
+    # The DC offset is not an acoustic carrier. At Nyquist no upper filter is needed.
+    signal = np.asarray(samples, dtype=np.float64)
+    signal = signal - signal.mean()
+    nyquist = rate / 2
+    if 0 < low and high < nyquist:
+        sos = butter(4, [low, high], btype="bandpass", fs=rate, output="sos")
+    elif high < nyquist:
+        sos = butter(4, high, btype="lowpass", fs=rate, output="sos")
+    elif low > 0:
+        sos = butter(4, low, btype="highpass", fs=rate, output="sos")
+    else:
+        sos = None
+    if sos is not None:
+        signal = sosfiltfilt(sos, signal)
+    envelope = np.abs(hilbert(signal))
     trim = min(rate // 4, len(envelope) // 8)
     return envelope[trim:-trim] if trim else envelope
 
@@ -44,8 +61,7 @@ def power_db(power):
 
 
 def demon_chunk(samples, rate):
-    high = min(3000, rate * .45)
-    envelope = demon_envelope(samples, rate, min(200, high / 2), high)
+    envelope = demon_envelope(samples, rate, 0, demon_upper_hz(rate))
     envelope, env_rate = resample_audio(envelope, rate, target_rate=200)
     f, power = periodogram(envelope, fs=env_rate, window="hann",
                            nfft=BLOCK_SECONDS * env_rate, detrend="constant")

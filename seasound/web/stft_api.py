@@ -1,6 +1,7 @@
 
 import numpy as np
-from flask import Blueprint, jsonify, request
+import soundfile as sf
+from flask import Blueprint, current_app, jsonify, request
 
 from dsp.stft_cache import load_or_compute_stft
 
@@ -67,7 +68,7 @@ def get_stft():
 
     try:
         frequencies, times, power, cache_hit = (
-            load_or_compute_stft(path)
+            load_or_compute_stft(path, audio_root=current_app.config.get("AUDIO_ROOT"))
         )
 
         freq_axis, time_axis, db = reduce_spectrogram(
@@ -77,6 +78,9 @@ def get_stft():
 
     except FileNotFoundError:
         return jsonify({"error": "WAV 파일을 찾지 못했습니다."}), 404
+
+    except sf.LibsndfileError:
+        return jsonify({"error": "WAV 파일을 해석하지 못했습니다."}), 422
 
     except ValueError as error:
         return jsonify({"error": str(error)}), 400

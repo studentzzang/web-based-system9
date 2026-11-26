@@ -7,9 +7,9 @@ import zipfile
 from pathlib import Path, PurePosixPath
 
 import numpy as np
+import soundfile as sf
 import yaml
 
-from data_io.loader import load_wav
 from data_io.preprocess import resample_audio
 from dsp.stft import compute_stft
 
@@ -49,7 +49,7 @@ def sha256_file(path):
     return digest.hexdigest()
 
 
-def load_or_compute_stft(recording_path):
+def load_or_compute_stft(recording_path, *, audio_root=None):
     # 1. YAML 설정 읽기
     config = load_config()
     options = config["stft"]
@@ -63,25 +63,26 @@ def load_or_compute_stft(recording_path):
         recording_path.replace("\\", "/")
     )
 
-    if (len(relative.parts) != 2
-            or relative.parts[0] not in ("vessel", "background")
+    root = Path(audio_root or WAV_ROOT).expanduser().resolve()
+    if (relative.is_absolute() or ".." in relative.parts or ":" in recording_path
             or relative.suffix.lower() != ".wav"):
         raise ValueError("잘못된 녹음 경로입니다.")
-
-    wav_path = (WAV_ROOT / str(relative)).resolve(strict=True)
-
-    if not wav_path.is_relative_to(WAV_ROOT.resolve()):
+    if audio_root is None and (len(relative.parts) != 2
+                               or relative.parts[0] not in ("vessel", "background")):
+        raise ValueError("잘못된 녹음 경로입니다.")
+    wav_path = (root / relative).resolve()
+    if not wav_path.is_relative_to(root):
         raise ValueError("허용되지 않은 경로입니다.")
-
+    if not wav_path.is_file():
+        raise FileNotFoundError("WAV 파일을 찾지 못했습니다.")
     stat = wav_path.stat()
 
-    # 3. 설정별 캐시 경로
-    cache_path = (
-        CACHE_ROOT
-        / config_hash
-        / relative.parts[0]
-        / (relative.stem + ".npz")
-    )
+    # 기본 VTUAD 캐시를 재사용하고 외부 데이터셋은 루트별로 구분합니다.
+    cache_dir = CACHE_ROOT / config_hash
+    if root != WAV_ROOT.resolve():
+        root_id = hashlib.sha256(os.fsencode(root)).hexdigest()
+        cache_dir = cache_dir / "roots" / root_id
+    cache_path = cache_dir / relative.with_suffix(".npz")
 
     # 4. 기존 캐시 확인
     if cache_path.exists():
@@ -116,7 +117,13 @@ def load_or_compute_stft(recording_path):
             pass  # 캐시가 손상되었다면 새로 계산
 
     # 5. 캐시가 없거나 유효하지 않으면 계산
-    audio, sr = load_wav(str(relative))
+    with sf.SoundFile(wav_path) as source:
+        if audio_root is None and source.channels != 1:
+            raise ValueError("Mono WAV만 지원합니다.")
+        audio = source.read(dtype="float32", always_2d=True).mean(axis=1)
+        sr = source.samplerate
+    if not audio.size or not np.isfinite(audio).all():
+        raise ValueError("분석 가능한 WAV 샘플이 필요합니다.")
 
     audio, sr = resample_audio(
         audio, sr, target_rate=config["sample_rate"]
