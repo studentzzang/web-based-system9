@@ -1,6 +1,6 @@
 """Multiband DEMON spectra and conditional shaft-rate evidence."""
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import numpy as np
@@ -22,6 +22,21 @@ def read_settings():
         cfg.setdefault("min_band_power_fraction", 0.0001)
         if (cfg["band_analysis"] not in ("combined", "independent")
                 or not 0 <= cfg["min_band_power_fraction"] <= 1):
+            raise ValueError
+        cfg.setdefault("min_contiguous_windows", 4)
+        cfg.setdefault("window_seconds", 20)
+        cfg.setdefault("overlap", 0.0)
+        cfg.setdefault("tracking", True)
+        cfg.setdefault("max_drift_hz_per_second", 0.008)
+        cfg.setdefault("max_gap_windows", 1)
+        cfg.setdefault("min_shared_orders", 2)
+        if not (type(cfg["window_seconds"]) is int and 5 <= cfg["window_seconds"] <= 60
+                and 0 <= cfg["overlap"] <= 0.75
+                and type(cfg["min_contiguous_windows"]) is int and cfg["min_contiguous_windows"] >= 2
+                and type(cfg["tracking"]) is bool
+                and 0 < cfg["max_drift_hz_per_second"] <= 0.1
+                and type(cfg["max_gap_windows"]) is int and 0 <= cfg["max_gap_windows"] <= 3
+                and type(cfg["min_shared_orders"]) is int and 1 <= cfg["min_shared_orders"] <= 8):
             raise ValueError
         bands = np.asarray(cfg["carrier_bands_hz"], dtype=float)
         low, high = cfg["modulation_range_hz"]
@@ -98,6 +113,9 @@ class Evidence:
     hz: float
     orders: tuple
     share: float
+    # Observed orders and their relative peak powers, not blade identities.
+    order_powers: tuple = ()
+    bands: tuple = ()
 
 
 def analyze_spectrum(freq, power, resolution, cfg):
@@ -149,7 +167,8 @@ def analyze_spectrum(freq, power, resolution, cfg):
         if share < cfg["min_explained_power"]:
             continue
         hz = float(np.median(lines[ids] / multiples[ids]))
-        proposals.append(Evidence(hz, harmonics, share))
+        order_powers = tuple((int(multiples[i]), float(power[peaks[i]] / total)) for i in ids)
+        proposals.append(Evidence(hz, harmonics, share, order_powers))
     # Nearby seed values describe the same observed group.
     unique = []
     for item in sorted(proposals, key=lambda e: (len(e.orders), e.share), reverse=True):
@@ -167,12 +186,12 @@ def analyze_window(samples, rate, cfg, bounds=None):
     for low, high in cfg["carrier_bands_hz"]:
         high = min(high, rate / 2)
         if low < high:
-            bands.append(spectrum(samples, rate, cfg, (low, high)))
+            bands.append(((low, high), spectrum(samples, rate, cfg, (low, high))))
     if not bands:
         raise ValueError("샘플레이트에 맞는 DEMON 입력 대역이 없습니다.")
 
-    freq, _, resolution = bands[0]
-    combined = np.sum([power for _, power, _ in bands], axis=0)
+    freq, _, resolution = bands[0][1]
+    combined = np.sum([power for _, (_, power, _) in bands], axis=0)
     dominant, _, _ = analyze_spectrum(freq, combined, resolution, cfg)
     lo, hi = cfg["modulation_range_hz"]
     mask = (freq >= lo) & (freq <= hi)
@@ -183,11 +202,11 @@ def analyze_window(samples, rate, cfg, bounds=None):
     # Compare candidates, not raw band power. Exclude negligible modulation
     # energy to avoid amplifying filter leakage or numerical noise.
     candidates = []
-    for f, power, res in bands:
+    for band, (f, power, res) in bands:
         if float(power[mask].sum()) < cfg.get("min_band_power_fraction", 0.0001) * total:
             continue
         _, _, items = analyze_spectrum(f, power, res, cfg)
-        candidates.extend(items)
+        candidates.extend(replace(item, bands=(band,)) for item in items)
 
     # Keep one actual observed family for each nearby base frequency. Do not
     # invent extra orders by combining unrelated peaks from different bands.
@@ -199,15 +218,23 @@ def analyze_window(samples, rate, cfg, bounds=None):
     unique = []
     tol = cfg["match_bins"] * resolution
     for item in sorted(candidates, key=lambda e: (-quality(e), e.hz, e.orders)):
-        if all(abs(item.hz - kept.hz) > tol for kept in unique):
+        # Preserve the best actually observed family; record supporting bands.
+        match = next((i for i, kept in enumerate(unique)
+                      if abs(item.hz - kept.hz) <= tol
+                      and len(set(item.orders) & set(kept.orders)) >= 2), None)
+        if match is None:
             unique.append(item)
+        else:
+            kept = unique[match]
+            unique[match] = replace(kept, bands=tuple(sorted(set(kept.bands + item.bands))))
     return dominant, resolution, unique
 
 
-def rank_windows(windows, cfg):
+def rank_fixed_windows(windows, cfg, centers, limit):
     """Score coverage, explained modulation power and harmonic count (not probability)."""
-    points = sorted((item.hz, index, res, item)
-                    for index, (_, res, items) in enumerate(windows) for item in items)
+    points = sorted(((item.hz, index, res, item)
+                     for index, (_, res, items) in enumerate(windows) for item in items),
+                    key=lambda point: point[:3])
     ranked = []
     start = 0
     while start < len(points):
@@ -230,7 +257,12 @@ def rank_windows(windows, cfg):
         weights = cfg["score_weights"]
         score = (weights["coverage"] * fraction + weights["explained_power"] * share
                  + weights["harmonic_count"] * min(len(orders)/4, 1))
+        qualified = sum(_qualified(item, cfg) for item in items)
         ranked.append(dict(hz=round(float(np.median([e.hz for e in items])), 3),
+                           qualified_segments=qualified, qualified_coverage=qualified / len(windows),
+                           track=[dict(window=i, time_seconds=round(centers[i], 3),
+                                       hz=round(e.hz, 3), orders=list(e.orders))
+                                  for i, e in sorted(best.items())],
                            segments=len(items), coverage=fraction, orders=orders,
                            explained_power=share, score=score))
     ranked.sort(key=lambda x: (-x["score"], -x["segments"], x["hz"]))
@@ -242,18 +274,155 @@ def rank_windows(windows, cfg):
                 and best["score"]-runner_up >= cfg["min_score_margin"]
                 and 1 in best["orders"] and len(best["orders"]) >= cfg["min_rpm_orders"]):
             accepted = [dict(best, rpm=round(best["hz"] * 60, 2))]
-    return ranked[:3], accepted
+    return ranked[:limit], accepted
 
 
-def blade_pass_rpm(windows, blades, cfg):
-    """Conditional conversion only when one dominant line recurs sufficiently often."""
-    peaks = sorted((hz, res) for hz, res, _ in windows if hz is not None)
-    groups = []
-    for hz, res in peaks:
-        if not groups or hz-groups[-1][0][0] > cfg["match_bins"] * min(res, groups[-1][0][1]):
-            groups.append([])
-        groups[-1].append((hz, res))
-    groups.sort(key=len, reverse=True)
+def window_ranges(frames, rate, cfg):
+    """Bounded, chronological windows; last window is aligned to EOF."""
+    if frames < 2 * rate:
+        return []
+    width = int(cfg.get("window_seconds", 20) * rate)
+    hop = max(1, round(width * (1 - cfg.get("overlap", 0.0))))
+    if hop == width:
+        ranges = []
+        for start in range(0, frames, width):
+            if frames - start < 2 * rate and ranges:
+                ranges[-1] = (ranges[-1][0], frames)
+                break
+            ranges.append((start, min(start + width, frames)))
+        return ranges
+    if frames <= width:
+        return [(0, frames)]
+    starts = list(range(0, frames - width + 1, hop))
+    if starts[-1] != frames - width:
+        starts.append(frames - width)
+    return [(start, start + width) for start in starts]
+
+
+def _quality(item, cfg):
+    w = cfg["score_weights"]
+    return w["explained_power"] * item.share + w["harmonic_count"] * min(len(item.orders)/4, 1)
+
+
+def _qualified(item, cfg):
+    # The required orders must coexist in a window, not just in a clip-wide union.
+    return 1 in item.orders and len(item.orders) >= cfg["min_rpm_orders"]
+
+
+def rank_windows(windows, cfg, centers=None, *, limit=3):
+    """Associate nearby harmonic families in time, then score entire tracks.
+
+    Coverage counts overlapping analysis windows, not independent observations.
+    A periodic acoustic source is a shaft hypothesis, never a measured shaft RPM.
+    """
+    if not windows:
+        return [], []
+    hop = cfg.get("window_seconds", 20) * (1 - cfg.get("overlap", 0.5))
+    centers = list(centers) if centers is not None else [i*hop for i in range(len(windows))]
+    if len(centers) != len(windows) or any(b <= a for a, b in zip(centers, centers[1:])):
+        raise ValueError("DEMON window centers must be strictly increasing")
+    if not cfg.get("tracking", True):
+        return rank_fixed_windows(windows, cfg, centers, limit)
+    # Find globally supported paths rather than greedily following the nearest
+    # line: overlapping windows can contain both old and new rotational rates.
+    nodes = [(i, res, item) for i, (_, res, items) in enumerate(windows) for item in items]
+    predecessors = [[] for _ in nodes]
+    by_window = {}
+    for ni, (i, res, item) in enumerate(nodes):
+        for prev_i in range(max(0, i-cfg.get("max_gap_windows", 1)-1), i):
+            dt = centers[i] - centers[prev_i]
+            for pi in by_window.get(prev_i, []):
+                _, prev_res, prev = nodes[pi]
+                tol = max(res, prev_res)*cfg["match_bins"] + dt*cfg.get("max_drift_hz_per_second", .008)
+                distance = abs(item.hz-prev.hz)
+                shared = len(set(item.orders) & set(prev.orders))
+                if distance <= tol and shared >= cfg.get("min_shared_orders", 2):
+                    predecessors[ni].append((pi, .08*distance/tol + .03*(i-prev_i-1)))
+        by_window.setdefault(i, []).append(ni)
+    rewards = [0.5 + _quality(item, cfg) + .10*_qualified(item, cfg) for _, _, item in nodes]
+    tracks, remaining = [], set(range(len(nodes)))
+    # Retain up to twelve competing paths; no reuse of a detected family.
+    while remaining and len(tracks) < 12:
+        best, parents = {}, {}
+        for ni in sorted(remaining):
+            best[ni], parents[ni] = rewards[ni], None
+            for pi, penalty in predecessors[ni]:
+                if pi in best and best[pi]+rewards[ni]-penalty > best[ni]:
+                    best[ni], parents[ni] = best[pi]+rewards[ni]-penalty, pi
+        end = max(best, key=best.get)
+        path = []
+        while end is not None:
+            path.append(end)
+            end = parents[end]
+        path.reverse()
+        tracks.append([nodes[ni] for ni in path])
+        remaining.difference_update(path)
+
+    ranked = []
+    weights = cfg["score_weights"]
+    for track in tracks:
+        items = [entry[2] for entry in track]
+        qualified = [item for item in items if _qualified(item, cfg)]
+        coverage = len(items)/len(windows)
+        qualified_coverage = len(qualified)/len(windows)
+        share = float(np.mean([item.share for item in items]))
+        harmonic_score = float(np.mean([min(len(item.orders)/4, 1) for item in items]))
+        score = weights["coverage"]*coverage + weights["explained_power"]*share + weights["harmonic_count"]*harmonic_score
+        # Blade-pass hypotheses: a repeatedly dominant observed harmonic >=2.
+        # No automatic claim that this harmonic really is blade passage.
+        votes = {}
+        for item in qualified:
+            if not item.order_powers:
+                continue
+            order = max(item.order_powers, key=lambda pair: pair[1])[0]
+            if order >= 2:
+                votes[order] = votes.get(order, 0) + 1
+        hz = float(np.median([item.hz for item in items]))
+        bpf = [dict(blade_count=n, hz=round(n*hz, 3), support=count/len(windows))
+               for n, count in sorted(votes.items(), key=lambda pair: (-pair[1], pair[0]))
+               if count/len(windows) >= cfg["min_window_fraction"]]
+        values = [item.hz for item in items]
+        ranked.append(dict(hz=round(hz, 3), segments=len(items), coverage=coverage,
+            qualified_coverage=qualified_coverage, qualified_segments=len(qualified),
+            orders=sorted({n for item in items for n in item.orders}),
+            explained_power=share, score=score,
+            rpm_min=round(60*min(values), 2), rpm_max=round(60*max(values), 2),
+            bands=[list(band) for band in sorted({b for item in items for b in item.bands})],
+            blade_pass_hypotheses=bpf,
+            track=[dict(window=i, time_seconds=round(centers[i], 3), hz=round(e.hz, 3),
+                        rpm=round(e.hz*60, 2), orders=list(e.orders)) for i, _, e in track]))
+    ranked.sort(key=lambda x: (-x["score"], -x["qualified_coverage"], x["hz"]))
+    accepted = []
+    if ranked:
+        best = ranked[0]
+        runner = ranked[1]["score"] if len(ranked) > 1 else 0
+        if (best["qualified_coverage"] >= cfg["min_window_fraction"]
+                and best["score"] >= cfg["min_score"]
+                and best["score"]-runner >= cfg["min_score_margin"]):
+            accepted = [dict(best, rpm=round(60*best["hz"], 2),
+                             assumption="one acoustic fundamental period equals one shaft revolution")]
+    return ranked[:limit], accepted
+
+
+def blade_pass_rpm(windows, blades, cfg, centers=None, accepted=None):
+    """Prefer a coherent shaft family with the specified dominant blade order.
+
+    A lone persistent modulation can only be converted under an explicit BPF
+    assumption. A conflicting coherent family is not silently divided.
+    """
+    if accepted is None:
+        _, accepted = rank_windows(windows, cfg, centers)
+    if accepted and cfg.get("tracking", True):
+        best = accepted[0]
+        hypothesis = next((h for h in best.get("blade_pass_hypotheses", [])
+                           if h["blade_count"] == blades), None)
+        if hypothesis is None:
+            return []
+        return [dict(best, blade_count=blades, blade_pass_hz=hypothesis["hz"],
+                     blade_basis="tracked_harmonic", assumption="specified blade count and observed dominant harmonic interpreted as BPF")]
+    # Compatibility: single strong modulation, with an explicit user assumption.
+
+    groups = dominant_groups(windows, cfg)
     if not groups or (len(groups) > 1 and len(groups[0]) == len(groups[1])):
         return []
     group = groups[0]
@@ -263,4 +432,84 @@ def blade_pass_rpm(windows, blades, cfg):
     blade_hz = float(np.median([p[0] for p in group]))
     hz = blade_hz / blades
     return [dict(hz=round(hz, 3), rpm=round(hz * 60, 2), segments=len(group),
-                 coverage=coverage, blade_count=blades, blade_pass_hz=round(blade_hz, 3))]
+                 coverage=coverage, blade_count=blades, blade_pass_hz=round(blade_hz, 3),
+                 rpm_min=round(60*min(p[0] for p in group)/blades, 2),
+                 rpm_max=round(60*max(p[0] for p in group)/blades, 2),
+                 blade_basis="assumed_dominant", assumption="dominant acoustic modulation assumed to be BPF")]
+
+def dominant_groups(windows, cfg):
+    """Group detected dominant modulation peaks by their frequency resolution."""
+    peaks = sorted((hz, res) for hz, res, _ in windows if hz is not None)
+    groups = []
+    for hz, res in peaks:
+        if not groups or hz - groups[-1][0][0] > cfg["match_bins"] * min(res, groups[-1][0][1]):
+            groups.append([])
+        groups[-1].append((hz, res))
+    return sorted(groups, key=len, reverse=True)
+
+
+def longest_rpm_run(track, ranges, cfg):
+    """Count adjacent windows with a fundamental and co-occurring harmonics."""
+    longest = []
+    current = []
+    for point in track:
+        if 1 not in point["orders"] or len(point["orders"]) < cfg["min_rpm_orders"]:
+            current = []
+            continue
+        index = point["window"]
+        if current and index != current[-1] + 1:
+            current = []
+        current.append(index)
+        if len(current) > len(longest):
+            longest = current.copy()
+    if not longest:
+        return dict(windows=0, start=None, end=None, seconds=0.0)
+    start = ranges[longest[0]][0]
+    end = ranges[longest[-1]][1]
+    return dict(windows=len(longest), start=start, end=end, seconds=end - start)
+
+
+def clip_shaft_evidence(windows, ranges, cfg):
+    """Rank clip evidence by observed windows and present conditional conversions."""
+    centers = [(start + end) / 2 for start, end in ranges]
+    candidates, _ = rank_windows(windows, cfg, centers, limit=12)
+    for candidate in candidates:
+        candidate["continuity"] = longest_rpm_run(candidate["track"], ranges, cfg)
+
+    def support(candidate):
+        return (candidate["qualified_segments"], candidate["continuity"]["seconds"],
+                candidate["segments"])
+
+    candidates.sort(key=lambda candidate: tuple(-value for value in support(candidate)) + (candidate["hz"],))
+    threshold = cfg["min_contiguous_windows"]
+    minimum_seconds = threshold * cfg["window_seconds"]
+    eligible = [c for c in candidates if c["continuity"]["windows"] >= threshold
+                and c["continuity"]["seconds"] >= minimum_seconds - 1e-6]
+
+    estimate = []
+    if eligible and (len(eligible) == 1 or support(eligible[0]) != support(eligible[1])):
+        best = eligible[0]
+        run = best["continuity"]
+        run_hz = [point["hz"] for point in best["track"]
+                  if ranges[point["window"]][0] >= run["start"]
+                  and ranges[point["window"]][1] <= run["end"]]
+        hz = float(np.median(run_hz))
+        estimate = [dict(best, hz=round(hz, 3), rpm=round(hz * 60, 2),
+                         assumption="one acoustic fundamental period equals one shaft revolution")]
+
+    reference = None
+    if candidates:
+        best = candidates[0]
+        reference = dict(hz=best["hz"], rpm=round(best["hz"] * 60, 2),
+                         segments=best["segments"], kind="harmonic")
+    else:
+        groups = dominant_groups(windows, cfg)
+        if groups:
+            group = groups[0]
+            hz = float(np.median([peak for peak, _ in group]))
+            reference = dict(hz=round(hz, 3), rpm=round(hz * 60, 2),
+                             segments=len(group), kind="dominant")
+    if estimate:
+        top = eligible[0]
+        candidates = [top, *(item for item in candidates if item is not top)]
+    return candidates[:3], estimate, reference

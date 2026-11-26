@@ -11,6 +11,15 @@ demon:
   carrier_bands_hz: [[0, 500], [500, 1000], [1000, 2000], [2000, 4000], [4000, 8000]]
   modulation_range_hz: [0.5, 50]
   envelope_rate: 200
+  window_seconds: 20
+  overlap: 0.0
+  # 4 consecutive 20 s windows, selected with VTUAD-background injection tests.
+  min_contiguous_windows: 4
+  tracking: true
+  # Experimental maximum acoustic frequency drift; not a vessel-specific limit.
+  max_drift_hz_per_second: 0.008
+  max_gap_windows: 1
+  min_shared_orders: 2
   band_analysis: independent
   min_band_power_fraction: 0.0001
   local_noise_width_hz: 1.0

@@ -205,24 +205,38 @@ class RecordingPanel {
     }
 
     const estimate = result.shafts[0];
-    shaft.textContent = '추정 불가';
+    const reference = result.rpm_reference;
+    const evidence = this.get('shaft-evidence');
+    const entries = [];
     if (estimate) {
-      const basis = result.shaft_method === 'explicit_blade_pass'
-        ? '우세 변조를 날개 통과음으로 가정 · 날개 ' + estimate.blade_count + '개'
-        : '기본 반복을 축 1회전으로 가정';
-      shaft.textContent = estimate.rpm.toFixed(2) + ' rpm 후보 · ' + basis;
+      const hasBlades = result.shaft_method === 'explicit_blade_pass';
+      shaft.textContent = '약 ' + estimate.rpm.toFixed(2) + ' rpm 추정';
+      entries.push(hasBlades
+        ? '날개 통과 주파수 가정 · ' + estimate.blade_pass_hz.toFixed(3) + ' Hz ÷ ' + estimate.blade_count + ' × 60'
+        : '기본 반복을 축 1회전으로 가정 · ' + estimate.hz.toFixed(3) + ' Hz × 60');
+    } else if (reference) {
+      shaft.textContent = '회전수 추정 보류';
+      entries.push('축 1회전으로 가정한 환산 참고값 · 약 ' + reference.rpm.toFixed(2) +
+        ' rpm (' + reference.hz.toFixed(3) + ' Hz × 60)');
+      if (reference.kind === 'dominant') {
+        entries.push('우세 변조 ' + reference.hz.toFixed(3) + ' Hz · ' +
+          reference.segments + '/' + result.segments + '구간 · 배음 조합 근거 부족');
+      }
+    } else {
+      shaft.textContent = '회전수 추정 보류';
+      entries.push('환산할 반복 주파수 검출 없음');
     }
 
-    const evidence = this.get('shaft-evidence');
-    const entries = (result.shaft_candidates ?? []).map(candidate =>
-      candidate.hz.toFixed(3) + ' Hz 반복 후보 · 근거 점수 ' +
-      Math.round(100 * candidate.score) + '/100 · ' +
-      candidate.segments + '/' + result.segments + '구간 · 배음 차수 ' +
-      candidate.orders.join('·')
-    );
-    if (!entries.length && Number.isFinite(result.modulated_segments)) {
-      entries.push('배음 후보 없음 · 변조 검출 ' +
-        result.modulated_segments + '/' + result.segments + '구간');
+    for (const candidate of result.shaft_candidates ?? []) {
+      const run = candidate.continuity;
+      let text = candidate.hz.toFixed(3) + ' Hz 반복 후보 · 전체 ' +
+        candidate.segments + '/' + result.segments + '구간 · 배음 차수 ' +
+        candidate.orders.join('·');
+      if (run?.windows) {
+        text += ' · ' + run.start.toFixed(1) + '–' + run.end.toFixed(1) +
+          '초, 배음 근거 ' + run.windows + '구간 연속';
+      }
+      entries.push(text);
     }
     evidence.hidden = entries.length === 0;
     for (const entry of entries) {
@@ -248,7 +262,7 @@ class RecordingPanel {
         : '검출 없음';
       this.showShaftResult(r);
       message(this.get('analysis-status'), '전체 ' + r.end.toFixed(1) +
-        '초 · 20초 단위로 ' + r.segments + '개 구간 분석' +
+        '초 · ' + r.segment_seconds + '초 창 ' + r.segments + '개 구간 분석' +
         ' · 토널 분석 ' + r.tonal_band_hz.join('–') + ' Hz');
     }catch(error){if(token===this.analysisEpoch && epoch===this.epoch)message(this.get('analysis-status'),error.name==='AbortError'?'분석 요청이 취소되었거나 시간이 초과되었습니다.':error.message,true);}
     finally{clearTimeout(timeout);}

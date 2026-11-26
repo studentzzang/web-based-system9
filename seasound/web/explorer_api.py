@@ -246,28 +246,32 @@ def clip_analysis(source, cfg, bounds, background, blades):
     rate = source.samplerate
     if source.frames < 2:
         raise ValueError('분석할 음향 샘플이 부족합니다.')
-    windows, measurements = [], []
-    while source.tell() < source.frames:
-        first = source.tell()
-        remaining = source.frames - first
-        frames = remaining if remaining < 22 * rate else 20 * rate
-        windows.append((first, first + frames))
-        samples = source.read(frames, dtype="float64", always_2d=True).mean(axis=1)
-        if len(samples) != frames:
-            raise ValueError('WAV 파일 길이가 올바르지 않습니다.')
-        if not background and frames >= 2 * rate:
-            measurements.append(demon.analyze_window(samples, rate, cfg, bounds))
-    candidates, shaft_groups = demon.rank_windows(measurements, cfg)
+
+    windows = demon.window_ranges(source.frames, rate, cfg)
+    ranges = [(first / rate, last / rate) for first, last in windows]
+    measurements = []
+    candidates, shaft_groups, reference = [], [], None
     method = "multiband_harmonics"
-    if blades and not background:
-        method = "explicit_blade_pass"
-        shaft_groups = demon.blade_pass_rpm(measurements, blades, cfg)
+    if not background:
+        for first, last in windows:
+            source.seek(first)
+            samples = source.read(last - first, dtype="float64", always_2d=True).mean(axis=1)
+            if len(samples) != last - first:
+                raise ValueError('WAV 파일 길이가 올바르지 않습니다.')
+            measurements.append(demon.analyze_window(samples, rate, cfg, bounds))
+        candidates, shaft_groups, reference = demon.clip_shaft_evidence(measurements, ranges, cfg)
+        if blades:
+            method = "explicit_blade_pass"
+            centers = [(first + last) / 2 for first, last in ranges]
+            shaft_groups = demon.blade_pass_rpm(measurements, blades, cfg, centers=centers)
+
+    tonal_windows = demon.window_ranges(source.frames, rate, {"window_seconds": 20, "overlap": 0})
     return {
         "scope": "clip", "start": 0, "end": source.frames / rate,
-        "segments": len(windows), "segment_seconds": 20, "background": background,
-        "shaft_candidates": candidates, "shaft_method": method,
+        "segments": len(windows), "segment_seconds": cfg["window_seconds"], "background": background,
+        "shaft_candidates": candidates, "shaft_method": method, "rpm_reference": reference,
         "modulated_segments": sum(w[0] is not None for w in measurements),
-        "tonals": representative_tonal(source, windows), "tonal_band_hz": TONAL_BAND_HZ,
+        "tonals": representative_tonal(source, tonal_windows), "tonal_band_hz": TONAL_BAND_HZ,
         "shafts": shaft_groups,
     }
 
