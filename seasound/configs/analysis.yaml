@@ -11,9 +11,11 @@ demon:
   carrier_bands_hz: [[0, 500], [500, 1000], [1000, 2000], [2000, 4000], [4000, 8000]]
   modulation_range_hz: [0.5, 50]
   envelope_rate: 200
+  band_analysis: independent
+  min_band_power_fraction: 0.0001
   local_noise_width_hz: 1.0
   min_peak_db: 6
-  min_peak_power_fraction: 0.01
+  min_peak_power_fraction: 0.005
   max_harmonic: 8
   match_bins: 1.0
   min_explained_power: 0.20

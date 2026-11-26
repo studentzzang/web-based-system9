@@ -18,6 +18,11 @@ def read_settings():
     try:
         with CONFIG_PATH.open(encoding="utf8") as stream:
             cfg = yaml.safe_load(stream)["demon"]
+        cfg.setdefault("band_analysis", "combined")
+        cfg.setdefault("min_band_power_fraction", 0.0001)
+        if (cfg["band_analysis"] not in ("combined", "independent")
+                or not 0 <= cfg["min_band_power_fraction"] <= 1):
+            raise ValueError
         bands = np.asarray(cfg["carrier_bands_hz"], dtype=float)
         low, high = cfg["modulation_range_hz"]
         bounds_ok = (bands.ndim == 2 and len(bands) > 0 and bands.shape[1] == 2
@@ -95,8 +100,8 @@ class Evidence:
     share: float
 
 
-def analyze_window(samples, rate, cfg, bounds=None):
-    freq, power, resolution = spectrum(samples, rate, cfg, bounds)
+def analyze_spectrum(freq, power, resolution, cfg):
+    """Detect modulation and harmonic families in one power spectrum."""
     low, high = cfg["modulation_range_hz"]
     mask = (freq >= low) & (freq <= high)
     total = power[mask].sum()
@@ -148,6 +153,52 @@ def analyze_window(samples, rate, cfg, bounds=None):
     # Nearby seed values describe the same observed group.
     unique = []
     for item in sorted(proposals, key=lambda e: (len(e.orders), e.share), reverse=True):
+        if all(abs(item.hz - kept.hz) > tol for kept in unique):
+            unique.append(item)
+    return dominant, resolution, unique
+
+
+def analyze_window(samples, rate, cfg, bounds=None):
+    """Keep the combined dominant line, but detect harmonic evidence per band."""
+    if bounds is not None or cfg.get("band_analysis", "combined") == "combined":
+        return analyze_spectrum(*spectrum(samples, rate, cfg, bounds), cfg)
+
+    bands = []
+    for low, high in cfg["carrier_bands_hz"]:
+        high = min(high, rate / 2)
+        if low < high:
+            bands.append(spectrum(samples, rate, cfg, (low, high)))
+    if not bands:
+        raise ValueError("샘플레이트에 맞는 DEMON 입력 대역이 없습니다.")
+
+    freq, _, resolution = bands[0]
+    combined = np.sum([power for _, power, _ in bands], axis=0)
+    dominant, _, _ = analyze_spectrum(freq, combined, resolution, cfg)
+    lo, hi = cfg["modulation_range_hz"]
+    mask = (freq >= lo) & (freq <= hi)
+    total = float(combined[mask].sum())
+    if total <= 0:
+        return dominant, resolution, []
+
+    # Compare candidates, not raw band power. Exclude negligible modulation
+    # energy to avoid amplifying filter leakage or numerical noise.
+    candidates = []
+    for f, power, res in bands:
+        if float(power[mask].sum()) < cfg.get("min_band_power_fraction", 0.0001) * total:
+            continue
+        _, _, items = analyze_spectrum(f, power, res, cfg)
+        candidates.extend(items)
+
+    # Keep one actual observed family for each nearby base frequency. Do not
+    # invent extra orders by combining unrelated peaks from different bands.
+    weights = cfg["score_weights"]
+    def quality(item):
+        return (weights["explained_power"] * item.share
+                + weights["harmonic_count"] * min(len(item.orders) / 4, 1))
+
+    unique = []
+    tol = cfg["match_bins"] * resolution
+    for item in sorted(candidates, key=lambda e: (-quality(e), e.hz, e.orders)):
         if all(abs(item.hz - kept.hz) > tol for kept in unique):
             unique.append(item)
     return dominant, resolution, unique
