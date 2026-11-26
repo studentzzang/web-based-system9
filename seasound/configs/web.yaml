@@ -1,0 +1,8 @@
+# 웹(Classifier) 설정. 모델을 바꾸려면 model_path 만 고친다 (다음 요청 때 자동으로 새 모델 로딩).
+# best.pt 안에 클래스 목록·정규화 값·전처리 설정이 들어 있어 코드는 그대로 둔다.
+model_path: runs\20261125-194621_4cls_nfft4096_s42\best.pt    # 예: runs/20261125-xxxxxx_4cls_nfft4096_s42/best.pt
+
+device: auto            # auto | cpu | cuda
+max_upload_mb: 50       # 명세: WAV, 50MB 이하
+min_duration_sec: 1.0   # 이보다 짧으면 거부. 1초~5초 파일은 5초가 되도록 뒤를 0으로 채워 판정
+log_path: logs/inference.jsonl   # 추론 로그 (명세: 입력 파일, 클래스별 확률, 응답 시간)

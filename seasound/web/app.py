@@ -7,6 +7,7 @@ from web.stft_api import stft_bp
 from web.explorer_api import explorer_bp
 from web.traffic_api import traffic_bp
 from web.simulator_api import simulator_bp
+from web.classifier_api import classifier_bp 
 
 app = Flask(__name__)
 app.register_blueprint(stft_bp)
@@ -21,6 +22,7 @@ app.config.update(
 app.register_blueprint(explorer_bp)
 app.register_blueprint(traffic_bp)
 app.register_blueprint(simulator_bp)
+app.register_blueprint(classifier_bp)   
 
 
 @app.get('/')
