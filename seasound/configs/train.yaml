@@ -4,7 +4,8 @@ seed: 42
 
 data:
   # build_features 실행 후 출력된 폴더 경로로 바꿀 것 (data/features/{feature_id})
-  feature_dir: data/features/9d3a8ba1fdd4
+  feature_dir:
+    data/features/9d3a8ba1fdd4
 
     # 6클래스 (통합 클래스, Tanker·Other 제외): rec macro F1 0.480 — Fishing F1 0이 평균을 깎음
   #   실험: runs/20261123-000204_resnet18_unified_s42
@@ -19,19 +20,19 @@ data:
 
 model:
   name: resnet18
-  pretrained: true          # ImageNet 사전학습 가중치 (첫 실행 때 인터넷 필요)
+  pretrained: true # ImageNet 사전학습 가중치 (첫 실행 때 인터넷 필요)
 
 train:
   epochs: 30
-  batch_size: 64
-  lr: 3.0e-4
-  weight_decay: 1.0e-4
-  patience: 8               # select_metric이 이만큼 안 오르면 조기 종료
-  select_metric: val_rec_macro_f1   # best 모델 선택 기준: 녹음 단위 val macro F1
+  batch_size:32
+  lr: 1.0e-4
+  weight_decay: 1.0e-3
+  patience: 8 # select_metric이 이만큼 안 오르면 조기 종료
+  select_metric: val_rec_macro_f1 # best 모델 선택 기준: 녹음 단위 val macro F1
   spec_augment: true
-  class_weight_power: 0.5   # 0 = 가중치 없음, 1 = 역빈도, 0.5 = 제곱근
-  amp: true                 # GPU에서 mixed precision
-  num_workers: 0            # Windows에서 문제 생기면 0 유지
+  class_weight_power: 1.0 # 0 = 가중치 없음, 1 = 역빈도, 0.5 = 제곱근
+  amp: true # GPU에서 mixed precision
+  num_workers: 0 # Windows에서 문제 생기면 0 유지
   deterministic: true
 
 output_root: runs
