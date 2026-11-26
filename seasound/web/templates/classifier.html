@@ -1,5 +1,451 @@
-{% extends 'base.html' %}
-{% block content %}<article class="panel notice"><span class="tag">미구현 · 화면 안내만 제공</span><h2>AI 선종 분류</h2><p>모델 로딩, WAV 전처리, 추론 및 Grad-CAM API가 필요합니다.</p><p>현재 실제 분석 결과를 생성하지 않습니다. 첨부 목업의 예시 수치는 결과로 표시하지 않습니다.</p><a href="{{ url_for('explorer') }}">Explorer에서 STFT 분석하기 →</a></article>
-<div class="mockup-notice" role="note"><strong>화면 디자인 예시 · 기능 미구현</strong><p>아래는 첨부 HTML의 화면 구성입니다. 파일명, 지도, 확률, 그래프 및 모든 수치는 예시이며 실제 처리 결과가 아닙니다. 입력 및 실행 기능은 비활성화되어 있습니다.</p></div>
-<div class="design-preview">{% include 'previews/classifier.html' %}</div>
+{% extends 'base.html' %} {% block content %}
+<div class="design-preview" id="clf-root">
+  <div class="module-heading">
+    <div>
+      <span class="kicker">02 / CLASSIFIER</span>
+      <h2 id="classifier-title">AI 선종 분류</h2>
+      <p>WAV 파일을 입력하고 통합 클래스별 예측과 Grad-CAM을 확인합니다.</p>
+    </div>
+    <span class="module-state">녹음 단위 예측</span>
+  </div>
+  <div class="classifier-grid">
+    <div class="panel upload-panel">
+      <div class="card-head">
+        <div>
+          <span class="kicker">INPUT</span>
+          <h3>WAV 파일 업로드</h3>
+        </div>
+      </div>
+      <label class="upload-box"
+        ><span class="upload-symbol">↑</span
+        ><strong>분류할 녹음을 선택하세요</strong><small>WAV · 최대 50 MB</small
+        ><input
+          type="file"
+          accept=".wav,audio/wav"
+          aria-label="분류할 WAV 파일 선택"
+      /></label>
+      <div class="upload-meta">
+        <span>전처리</span><b>16 kHz · 5초 구간 · 50% 중첩</b>
+      </div>
+    </div>
+    <div class="panel result-panel">
+      <div class="card-head">
+        <div>
+          <span class="kicker">PREDICTION</span>
+          <h3>선종 분류 결과</h3>
+        </div>
+        <span class="tag">ResNet18</span>
+      </div>
+      <div class="prediction-hero">
+        <div class="confidence"><b>–</b><small>확신도</small></div>
+        <div>
+          <small>예측 클래스</small><strong>–</strong
+          ><span>WAV를 선택하거나 아래 서버 녹음을 클릭하세요</span>
+        </div>
+      </div>
+      <div class="prob-list"></div>
+    </div>
+    <div class="panel cam-panel">
+      <div class="card-head">
+        <div>
+          <span class="kicker">MODEL EXPLANATION</span>
+          <h3>Grad-CAM · 스펙트로그램 중첩</h3>
+        </div>
+        <span class="tag">구간 –</span>
+      </div>
+      <div class="cam-chart" role="img" aria-label="Grad-CAM 히트맵"></div>
+      <div class="cam-axis"><span>–</span><span>–</span></div>
+      <div class="cam-legend">
+        <span>영향 낮음</span><i></i><span>영향 높음</span>
+      </div>
+    </div>
+  </div>
+  <div class="panel evidence-panel">
+    <div class="card-head">
+      <div>
+        <span class="kicker">SIGNAL / MODEL EVIDENCE</span>
+        <h3>LOFAR · Grad-CAM 비교</h3>
+      </div>
+      <span class="tag">서버 녹음 선택 시 표시</span>
+    </div>
+    <div class="evidence-grid">
+      <div>
+        <span>LOFAR · 토널 성분</span>
+        <div
+          class="evidence-chart lofar-evidence"
+          role="img"
+          aria-label="LOFAR 토널 성분"
+        ></div>
+        <small>지속적인 주파수 성분</small>
+      </div>
+      <div>
+        <span>Grad-CAM · AI 판단 영역</span>
+        <div
+          class="evidence-chart cam-evidence"
+          role="img"
+          aria-label="Grad-CAM 강조 영역"
+        ></div>
+        <small>모델이 예측에 사용한 영역</small>
+      </div>
+    </div>
+  </div>
+</div>
+
+<article class="panel" id="clf-server">
+  <div class="card-head">
+    <div>
+      <span class="kicker">SERVER RECORDINGS</span>
+      <h3>서버 녹음에서 선택 · 정답 비교</h3>
+    </div>
+    <span class="tag" id="clf-list-tag">catalog.csv</span>
+  </div>
+  <div style="display: flex; flex-wrap: wrap; gap: 8px; align-items: center">
+    <label
+      >split
+      <select id="clf-split">
+        <option value="test">test</option>
+        <option value="val">val</option>
+        <option value="train">train</option>
+        <option value="">전체</option>
+      </select></label
+    >
+    <label
+      >정답 클래스
+      <select id="clf-true">
+        <option value="">전체</option>
+      </select></label
+    >
+    <input id="clf-q" placeholder="파일 이름 검색 (예: vessel/12)" />
+    <button id="clf-load" type="button">목록 불러오기</button>
+    <button id="clf-all" type="button">목록 전체 판정</button>
+  </div>
+  <small id="clf-list-info"></small>
+  <audio
+    id="clf-player"
+    controls
+    style="width: 100%; margin-top: 8px; display: none"
+  ></audio>
+  <div style="max-height: 320px; overflow: auto; margin-top: 8px">
+    <table style="width: 100%; border-collapse: collapse">
+      <thead>
+        <tr>
+          <th>녹음</th>
+          <th>split</th>
+          <th>길이</th>
+          <th>정답</th>
+          <th>예측</th>
+          <th>확신도</th>
+          <th></th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="clf-rows"></tbody>
+    </table>
+  </div>
+  <div id="clf-summary"></div>
+</article>
+
+<style>
+  #clf-server th,
+  #clf-server td {
+    padding: 4px 8px;
+    font-size: 14px;
+    text-align: left;
+  }
+  #clf-server #clf-rows tr {
+    border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+    cursor: pointer;
+  }
+  #clf-server #clf-rows tr:hover {
+    background: rgba(59, 130, 246, 0.06);
+  }
+  #clf-server .ok {
+    color: #15803d;
+    font-weight: 600;
+  }
+  #clf-server .ng {
+    color: #c00;
+    font-weight: 600;
+  }
+  #clf-server .cm td {
+    text-align: center;
+    border: 1px solid rgba(0, 0, 0, 0.08);
+    min-width: 64px;
+  }
+  #clf-root .clf-note {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 8px;
+    color: #777;
+    font-size: 13px;
+  }
+</style>
+<script>
+  (() => {
+    const root = document.getElementById("clf-root");
+    const q = (s) => root.querySelector(s),
+      $ = (id) => document.getElementById(id);
+    const pct = (p) => (p * 100).toFixed(1) + "%";
+    const input = q(".upload-box input"),
+      fileName = q(".upload-box strong");
+    const conf = q(".confidence b"),
+      hero = q(".prediction-hero > div:nth-child(2)");
+    const label = hero && hero.querySelector("strong"),
+      desc = hero && hero.querySelector("span");
+    const probs = q(".prob-list"),
+      modelTag = q(".result-panel .tag");
+    const camTag = q(".cam-panel .tag"),
+      camAxis = root.querySelectorAll(".cam-axis span");
+    const camChart = q(".cam-chart"),
+      evTag = q(".evidence-panel .tag");
+    const lofarChart = q(".lofar-evidence"),
+      camEvidence = q(".cam-evidence");
+    let classes = [],
+      rows = [];
+
+    root.style.pointerEvents = "auto";
+    if (input) input.disabled = false;
+    const note = (el, msg) => {
+      if (el) el.innerHTML = `<div class="clf-note">${msg}</div>`;
+    };
+    note(camChart, "Grad-CAM은 다음 단계에서 연결됩니다");
+    note(camEvidence, "Grad-CAM은 다음 단계에서 연결됩니다");
+    note(
+      lofarChart,
+      "서버 녹음을 판정하면 같은 5초 구간의 토널 주파수를 표시합니다",
+    );
+
+    fetch("/api/classifier/model")
+      .then((r) => r.json())
+      .then((m) => {
+        if (m.error) {
+          if (desc) desc.textContent = "모델 오류: " + m.error;
+          return;
+        }
+        classes = m.classes;
+        if (modelTag) modelTag.textContent = "ResNet18 · " + m.run_id;
+      })
+      .catch((e) => {
+        if (desc) desc.textContent = "모델 정보 요청 실패: " + e;
+      })
+      .finally(() => loadList());
+
+    function show(j, rtt, name) {
+      if (fileName && name) fileName.textContent = name;
+      conf.textContent = Math.round(j.confidence * 100) + "%";
+      label.textContent = j.label;
+      const truth = j.true_label
+        ? ` · 정답 ${j.true_label} ${j.correct === true ? "✓" : j.correct === false ? "✗" : ""}`
+        : "";
+      if (desc)
+        desc.textContent = `${j.n_segments}개 구간 확률의 평균${j.padded ? " · 5초 미만 0 채움" : ""}${truth} · ${j.response_ms}ms`;
+      probs.innerHTML = Object.entries(j.probabilities)
+        .sort((a, b) => b[1] - a[1])
+        .map(
+          ([c, p]) =>
+            `<div><span>${c}</span><i><b style="width:${(p * 100).toFixed(1)}%"></b></i><strong>${pct(p)}</strong></div>`,
+        )
+        .join("");
+      if (!j.segments || !j.segments.length) return null;
+      const best = j.segments.reduce((a, s) =>
+        s.probabilities[j.label] > a.probabilities[j.label] ? s : a,
+      );
+      const from = best.start_sec,
+        to = +(best.start_sec + 5).toFixed(2);
+      if (camTag) camTag.textContent = `${from}–${to}초 구간`;
+      if (camAxis.length === 2) {
+        camAxis[0].textContent = from + "초";
+        camAxis[1].textContent = to + "초";
+      }
+      note(
+        camChart,
+        `모델이 ${j.label}로 가장 확신한 구간 (${pct(best.probabilities[j.label])})<br>Grad-CAM은 다음 단계에서 연결됩니다`,
+      );
+      return best;
+    }
+
+    if (input)
+      input.addEventListener("change", async () => {
+        const f = input.files[0];
+        if (!f) return;
+        label.textContent = "판정 중...";
+        conf.textContent = "–";
+        probs.innerHTML = "";
+        const fd = new FormData();
+        fd.append("file", f);
+        const t0 = performance.now();
+        const r = await fetch("/api/classifier/predict", {
+          method: "POST",
+          body: fd,
+        });
+        const j = await r.json();
+        const rtt = (performance.now() - t0).toFixed(0);
+        if (!r.ok) {
+          label.textContent = "–";
+          if (desc) desc.textContent = j.error;
+          return;
+        }
+        show(j, rtt, f.name);
+        note(
+          lofarChart,
+          "업로드 파일은 서버에 저장하지 않아 토널 분석은 서버 녹음에서만 표시합니다",
+        );
+      });
+
+    async function loadList() {
+      const qs = new URLSearchParams({
+        split: $("clf-split").value,
+        label: $("clf-true").value,
+        q: $("clf-q").value,
+        limit: 600,
+      });
+      $("clf-list-info").textContent = "목록 불러오는 중...";
+      let r, j;
+      try {
+        r = await fetch("/api/classifier/recordings?" + qs);
+        j = await r.json();
+      } catch (e) {
+        $("clf-list-info").textContent =
+          "목록 요청 실패 (classifier_api.py 가 최신인지, 서버 터미널 에러 확인): " +
+          e;
+        return;
+      }
+      if (!r.ok) {
+        $("clf-list-info").textContent = "목록 오류: " + j.error;
+        return;
+      }
+      $("clf-list-info").textContent = j.total
+        ? j.notices.join(" ")
+        : "조건에 맞는 녹음이 없습니다. " + j.notices.join(" ");
+      const cur = $("clf-true").value;
+      $("clf-true").innerHTML =
+        '<option value="">전체</option>' +
+        j.labels
+          .map((l) => `<option ${l === cur ? "selected" : ""}>${l}</option>`)
+          .join("");
+      rows = j.recordings;
+      $("clf-list-tag").textContent = `${j.total}개 녹음`;
+      $("clf-summary").innerHTML = "";
+      $("clf-rows").innerHTML = rows
+        .map(
+          (r, i) => `<tr data-i="${i}"><td>${r.name}</td><td>${r.split}</td>
+      <td>${r.duration ? r.duration.toFixed(0) + "s" : ""}</td><td>${r.label}</td><td id="clf-p${i}"></td>
+      <td id="clf-c${i}"></td><td id="clf-m${i}"></td><td><button type="button" data-play="${i}">재생</button></td></tr>`,
+        )
+        .join("");
+    }
+
+    async function predictRow(i, brief) {
+      const r = rows[i];
+      $("clf-p" + i).textContent = "...";
+      const t0 = performance.now();
+      const res = await fetch("/api/classifier/predict_recording", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: r.path, brief }),
+      });
+      const j = await res.json();
+      const rtt = (performance.now() - t0).toFixed(0);
+      if (!res.ok) {
+        $("clf-p" + i).textContent = "오류";
+        $("clf-list-info").textContent = "판정 오류: " + j.error;
+        return null;
+      }
+      $("clf-p" + i).textContent = j.label;
+      $("clf-c" + i).textContent = pct(j.confidence);
+      $("clf-m" + i).innerHTML =
+        j.correct === true
+          ? '<span class="ok">O</span>'
+          : j.correct === false
+            ? '<span class="ng">X</span>'
+            : "";
+      if (!brief) {
+        root.scrollIntoView({ behavior: "smooth" });
+        const best = show(j, rtt, r.name);
+        if (best) tonals(r.path, best.start_sec);
+      }
+      return j;
+    }
+
+    async function tonals(path, start) {
+      if (evTag)
+        evTag.textContent = `같은 녹음 · ${start}–${+(start + 5).toFixed(2)}초`;
+      note(lofarChart, "분석 중...");
+      const r = await fetch(
+        "/api/recordings/analysis?" +
+          new URLSearchParams({ path, start, seconds: 5 }),
+      );
+      const j = await r.json();
+      if (!r.ok) {
+        note(lofarChart, j.error);
+        return;
+      }
+      note(
+        lofarChart,
+        j.tonals.length
+          ? j.tonals.map((t) => `${t.hz} Hz (${t.relative_db} dB)`).join("<br>")
+          : "뚜렷한 토널 성분 없음",
+      );
+    }
+
+    $("clf-rows").onclick = (e) => {
+      const p = e.target.dataset.play;
+      if (p !== undefined) {
+        $("clf-player").src =
+          "/api/recordings/audio?path=" + encodeURIComponent(rows[p].path);
+        $("clf-player").style.display = "block";
+        $("clf-player").play();
+        return;
+      }
+      const tr = e.target.closest("tr");
+      if (tr) predictRow(+tr.dataset.i, false);
+    };
+    $("clf-load").onclick = loadList;
+    $("clf-split").onchange = loadList;
+    $("clf-true").onchange = loadList;
+    $("clf-q").onkeydown = (e) => {
+      if (e.key === "Enter") loadList();
+    };
+
+    $("clf-all").onclick = async () => {
+      if (!rows.length) return;
+      const btn = $("clf-all");
+      btn.disabled = true;
+      const res = [];
+      for (let i = 0; i < rows.length; i++) {
+        btn.textContent = `판정 중 ${i + 1}/${rows.length}`;
+        const j = await predictRow(i, true);
+        if (j && j.correct !== null) res.push([j.true_label, j.label]);
+      }
+      btn.textContent = "목록 전체 판정";
+      btn.disabled = false;
+      if (!res.length) return;
+      const cls = classes.filter((c) =>
+        res.some(([t, p]) => t === c || p === c),
+      );
+      const cm = cls.map((t) =>
+        cls.map((p) => res.filter(([a, b]) => a === t && b === p).length),
+      );
+      const f1s = cls
+        .map((c, k) => {
+          const tp = cm[k][k],
+            fp = cm.reduce((s, row) => s + row[k], 0) - tp,
+            fn = cm[k].reduce((s, v) => s + v, 0) - tp,
+            pr = tp + fp ? tp / (tp + fp) : 0,
+            rc = tp + fn ? tp / (tp + fn) : 0;
+          return { c, f1: pr + rc ? (2 * pr * rc) / (pr + rc) : 0, n: tp + fn };
+        })
+        .filter((x) => x.n > 0);
+      const acc = res.filter(([a, b]) => a === b).length / res.length;
+      const mf1 = f1s.reduce((s, x) => s + x.f1, 0) / f1s.length;
+      $("clf-summary").Get-Content web\templates\classifier.html -Encoding utf8 -TotalCount 3nerHTML =
+        `<h3>${res.length}개 녹음: 정확도 ${pct(acc)} · macro F1 ${mf1.toFixed(3)}</h3>
+      <small>${f1s.map((x) => `${x.c} F1 ${x.f1.toFixed(3)} (n=${x.n})`).join(" · ")}</small>
+      <table class="cm"><tr><td>정답＼예측</td>${cls.map((c) => `<td>${c}</td>`).join("")}</tr>
+      ${cls.map((t, a) => `<tr><td>${t}</td>${cm[a].map((v, b) => `<td style="background:${a === b ? "#dcfce7" : v ? "#fee2e2" : ""}">${v}</td>`).join("")}</tr>`).join("")}</table>`;
+    };
+  })();
+</script>
 {% endblock %}
